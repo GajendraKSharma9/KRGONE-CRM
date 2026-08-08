@@ -51,6 +51,10 @@ export const SmartCaptureModal: React.FC<SmartCaptureModalProps> = ({
   const [extractedRecords, setExtractedRecords] = useState<ExtractedLeadRecord[]>([]);
   const [step, setStep] = useState<'capture' | 'review'>('capture');
 
+  // Scanner framing state
+  const [frameMode, setFrameMode] = useState<'document' | 'card' | 'free'>('document');
+  const [isFlashing, setIsFlashing] = useState(false);
+
   // Start Camera Stream
   const startCamera = async () => {
     setCameraError(null);
@@ -63,8 +67,8 @@ export const SmartCaptureModal: React.FC<SmartCaptureModalProps> = ({
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: facingMode,
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
+          width: { ideal: 1920 },
+          height: { ideal: 1080 }
         }
       });
 
@@ -122,7 +126,11 @@ export const SmartCaptureModal: React.FC<SmartCaptureModalProps> = ({
     if (!ctx) return;
 
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+
+    // Trigger visual camera shutter flash effect
+    setIsFlashing(true);
+    setTimeout(() => setIsFlashing(false), 200);
 
     const newSnap = {
       id: `snap_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
@@ -251,8 +259,8 @@ export const SmartCaptureModal: React.FC<SmartCaptureModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden my-auto animate-in fade-in zoom-in-95 duration-200">
+    <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-5xl h-[92vh] max-h-[900px] flex flex-col overflow-hidden my-auto animate-in fade-in zoom-in-95 duration-200">
         
         {/* Modal Header */}
         <div className="px-6 py-4 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800">
@@ -311,41 +319,135 @@ export const SmartCaptureModal: React.FC<SmartCaptureModalProps> = ({
 
             {/* TAB: CAMERA */}
             {activeTab === 'camera' && (
-              <div className="space-y-4">
-                <div className="relative bg-slate-950 rounded-2xl overflow-hidden aspect-video max-h-72 flex items-center justify-center border border-slate-800 shadow-inner">
+              <div className="space-y-3">
+                {/* Frame Mode Selector */}
+                <div className="flex items-center justify-between px-1">
+                  <div className="flex items-center space-x-2 text-xs font-semibold text-slate-700">
+                    <Camera className="w-4 h-4 text-blue-600" />
+                    <span>Scan Guide Overlay:</span>
+                  </div>
+                  <div className="flex bg-slate-200 p-0.5 rounded-lg space-x-1 text-[11px] font-bold">
+                    <button
+                      type="button"
+                      onClick={() => setFrameMode('document')}
+                      className={`px-3 py-1 rounded-md transition-all ${
+                        frameMode === 'document'
+                          ? 'bg-blue-600 text-white shadow-2xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      📄 Full A4 / Page
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFrameMode('card')}
+                      className={`px-3 py-1 rounded-md transition-all ${
+                        frameMode === 'card'
+                          ? 'bg-blue-600 text-white shadow-2xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      🎴 Business Card
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFrameMode('free')}
+                      className={`px-3 py-1 rounded-md transition-all ${
+                        frameMode === 'free'
+                          ? 'bg-blue-600 text-white shadow-2xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      🖼️ Full Frame
+                    </button>
+                  </div>
+                </div>
+
+                {/* Scanner Viewport Container */}
+                <div className="relative bg-slate-950 rounded-2xl overflow-hidden w-full h-[380px] sm:h-[480px] md:h-[540px] flex items-center justify-center border border-slate-800 shadow-2xl group">
                   <video
                     ref={videoRef}
                     playsInline
+                    autoPlay
                     muted
-                    className="w-full h-full object-cover"
+                    className="w-full h-full object-contain bg-slate-950"
                   />
                   <canvas ref={canvasRef} className="hidden" />
 
-                  {/* Camera overlay guideline frame */}
-                  <div className="absolute inset-8 border-2 border-dashed border-blue-400/50 rounded-xl pointer-events-none flex items-center justify-center">
-                    <span className="bg-slate-900/80 text-blue-200 text-[11px] font-semibold px-3 py-1 rounded-full border border-blue-400/30 backdrop-blur-xs">
-                      Align Business Card / Document Here
+                  {/* Shutter Flash Animation */}
+                  {isFlashing && (
+                    <div className="absolute inset-0 bg-white z-30 animate-out fade-out duration-200 pointer-events-none" />
+                  )}
+
+                  {/* Top Header Overlay Bar */}
+                  <div className="absolute top-3 left-3 right-3 flex items-center justify-between pointer-events-none">
+                    <span className="px-3 py-1 bg-slate-900/80 text-cyan-300 text-[11px] font-mono font-bold rounded-full border border-cyan-500/30 backdrop-blur-md flex items-center space-x-1.5 shadow-md">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                      <span>1080p HD Full-Page Document Viewport</span>
                     </span>
+
+                    {capturedFiles.length > 0 && (
+                      <span className="px-3 py-1 bg-emerald-600 text-white text-[11px] font-bold rounded-full shadow-lg border border-emerald-400 animate-bounce">
+                        {capturedFiles.length} Photo(s) Captured
+                      </span>
+                    )}
                   </div>
 
-                  {/* Camera Controls Overlay */}
-                  <div className="absolute bottom-4 left-0 right-0 flex items-center justify-center space-x-4">
+                  {/* Camera Scanner Guideline Overlay */}
+                  {frameMode === 'document' && (
+                    <div className="absolute inset-x-12 inset-y-6 sm:inset-x-24 sm:inset-y-8 border-2 border-dashed border-cyan-400/60 rounded-2xl pointer-events-none flex flex-col items-center justify-between p-4 bg-cyan-950/10 backdrop-blur-[1px]">
+                      {/* Corner Scanner Targets */}
+                      <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-cyan-400 rounded-tl-xl"></div>
+                      <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-cyan-400 rounded-tr-xl"></div>
+                      <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-cyan-400 rounded-bl-xl"></div>
+                      <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-cyan-400 rounded-br-xl"></div>
+
+                      <span className="bg-slate-900/90 text-cyan-200 text-[11px] font-bold px-4 py-1.5 rounded-full border border-cyan-400/40 shadow-md">
+                        Align Full Document / A4 Sheet Inside Scanner Box
+                      </span>
+                    </div>
+                  )}
+
+                  {frameMode === 'card' && (
+                    <div className="absolute inset-x-8 sm:inset-x-20 inset-y-16 sm:inset-y-24 border-2 border-dashed border-amber-400/70 rounded-2xl pointer-events-none flex items-center justify-center bg-amber-950/10">
+                      <div className="absolute top-0 left-0 w-7 h-7 border-t-4 border-l-4 border-amber-400 rounded-tl-xl"></div>
+                      <div className="absolute top-0 right-0 w-7 h-7 border-t-4 border-r-4 border-amber-400 rounded-tr-xl"></div>
+                      <div className="absolute bottom-0 left-0 w-7 h-7 border-b-4 border-l-4 border-amber-400 rounded-bl-xl"></div>
+                      <div className="absolute bottom-0 right-0 w-7 h-7 border-b-4 border-r-4 border-amber-400 rounded-br-xl"></div>
+
+                      <span className="bg-slate-900/90 text-amber-200 text-[11px] font-bold px-4 py-1.5 rounded-full border border-amber-400/40 shadow-md">
+                        Align Business Card Here
+                      </span>
+                    </div>
+                  )}
+
+                  {frameMode === 'free' && (
+                    <div className="absolute inset-4 border border-slate-700/50 rounded-2xl pointer-events-none">
+                      <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-blue-400 rounded-tl-xl"></div>
+                      <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-blue-400 rounded-tr-xl"></div>
+                      <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-blue-400 rounded-bl-xl"></div>
+                      <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-blue-400 rounded-br-xl"></div>
+                    </div>
+                  )}
+
+                  {/* Camera Controls Overlay Bar */}
+                  <div className="absolute bottom-4 left-0 right-0 flex items-center justify-center space-x-4 px-4">
                     <button
                       type="button"
                       onClick={() => setFacingMode(prev => prev === 'user' ? 'environment' : 'user')}
-                      className="p-2.5 bg-slate-900/80 hover:bg-slate-900 text-white rounded-full border border-slate-700 backdrop-blur-xs transition-transform active:scale-95"
-                      title="Flip Camera"
+                      className="p-3 bg-slate-900/90 hover:bg-slate-900 text-white rounded-full border border-slate-700 backdrop-blur-md transition-transform active:scale-90 shadow-lg"
+                      title="Flip Camera (Front/Rear)"
                     >
-                      <FlipHorizontal className="w-4 h-4" />
+                      <FlipHorizontal className="w-5 h-5 text-slate-200" />
                     </button>
 
                     <button
                       type="button"
                       onClick={handleSnapPhoto}
-                      className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-full shadow-lg flex items-center space-x-2 border border-blue-400 active:scale-95 transition-transform"
+                      className="px-8 py-3 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white font-extrabold text-sm rounded-full shadow-2xl flex items-center space-x-2 border-2 border-blue-300 active:scale-95 transition-all cursor-pointer"
                     >
-                      <Camera className="w-4 h-4" />
-                      <span>Take Snap</span>
+                      <Camera className="w-5 h-5" />
+                      <span>Take Photo Snap</span>
                     </button>
                   </div>
                 </div>
