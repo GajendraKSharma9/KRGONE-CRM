@@ -1,6 +1,6 @@
 {
   "name": "KRGONE Sales Navigator™",
   "description": "Lightweight CRM for managing businesses, contacts, sales activities, follow-ups, and Excel bulk imports.",
-  "requestFramePermissions": [],
+  "requestFramePermissions": ["camera"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

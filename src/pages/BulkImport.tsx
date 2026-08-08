@@ -10,10 +10,14 @@ import {
   RefreshCw,
   Building2,
   FileCheck,
-  Info
+  Info,
+  Camera,
+  Sparkles
 } from 'lucide-react';
 import { UserProfile, Business, ImportValidationResult } from '../types';
 import { businessService } from '../services/businessService';
+import { SmartCaptureModal } from '../components/SmartCaptureModal';
+import { ExtractedLeadRecord } from '../services/aiExtractService';
 
 interface BulkImportProps {
   user: UserProfile;
@@ -38,6 +42,9 @@ export const BulkImport: React.FC<BulkImportProps> = ({ user }) => {
     industry: '',
     status: ''
   });
+
+  // Smart Capture Modal State
+  const [isSmartCaptureOpen, setIsSmartCaptureOpen] = useState(false);
 
   // Validation Preview State
   const [step, setStep] = useState<'upload' | 'mapping' | 'preview' | 'complete'>('upload');
@@ -236,6 +243,100 @@ export const BulkImport: React.FC<BulkImportProps> = ({ user }) => {
     setStep('preview');
   };
 
+  // Receive records extracted from Smart Capture (Camera / Image / PDF AI OCR)
+  const handleSmartCaptureExtracted = (extractedRecords: ExtractedLeadRecord[]) => {
+    if (!extractedRecords || extractedRecords.length === 0) return;
+
+    const stdHeaders = ['Company Name', 'Contact Person', 'Mobile Number', 'Email', 'Industry', 'Status'];
+    setHeaders(stdHeaders);
+
+    const convertedRows = extractedRecords.map(r => [
+      r.companyName,
+      r.contactPerson,
+      r.mobile,
+      r.email,
+      r.industry || 'General',
+      r.status || 'New'
+    ]);
+    setRawRows(convertedRows);
+
+    const mapping = {
+      companyName: 'Company Name',
+      contactPerson: 'Contact Person',
+      mobile: 'Mobile Number',
+      email: 'Email',
+      industry: 'Industry',
+      status: 'Status'
+    };
+    setColumnMapping(mapping);
+
+    // Run duplicate detection against existing DB records
+    const dbSignatures = new Set<string>();
+    existingBusinesses.forEach(b => {
+      const sig = getSignature(b.companyName, b.mobile, b.email);
+      dbSignatures.add(sig);
+    });
+
+    const fileSignatures = new Set<string>();
+    const valid: Omit<Business, 'id'>[] = [];
+    const duplicates: { record: Omit<Business, 'id'>; reason: string }[] = [];
+    const invalid: { row: number; record: Record<string, any>; reason: string }[] = [];
+
+    extractedRecords.forEach((rec, index) => {
+      const rawCompany = (rec.companyName || '').trim();
+      const rawContact = (rec.contactPerson || '').trim();
+      const rawMobile = (rec.mobile || '').trim();
+      const rawEmail = (rec.email || '').trim();
+      const rawIndustry = (rec.industry || 'General').trim();
+      let rawStatus = (rec.status || 'New').trim();
+
+      if (!['New', 'Won', 'Lost'].includes(rawStatus)) {
+        rawStatus = 'New';
+      }
+
+      if (!rawCompany) {
+        invalid.push({
+          row: index + 1,
+          record: { companyName: rawCompany, contactPerson: rawContact, mobile: rawMobile, email: rawEmail },
+          reason: 'Company Name is missing'
+        });
+        return;
+      }
+
+      const record: Omit<Business, 'id'> = {
+        organizationId: user.organizationId,
+        companyName: rawCompany,
+        contactPerson: rawContact,
+        mobile: rawMobile,
+        email: rawEmail,
+        industry: rawIndustry,
+        status: rawStatus as any,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      const sig = getSignature(rawCompany, rawMobile, rawEmail);
+
+      if (dbSignatures.has(sig)) {
+        duplicates.push({
+          record,
+          reason: 'Already exists in database'
+        });
+      } else if (fileSignatures.has(sig)) {
+        duplicates.push({
+          record,
+          reason: 'Duplicate within captured items'
+        });
+      } else {
+        fileSignatures.add(sig);
+        valid.push(record);
+      }
+    });
+
+    setValidationResult({ valid, duplicates, invalid });
+    setStep('preview');
+  };
+
   // Perform Import using optimized batching
   const handleStartImport = async () => {
     if (!validationResult || validationResult.valid.length === 0) return;
@@ -316,43 +417,97 @@ export const BulkImport: React.FC<BulkImportProps> = ({ user }) => {
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       {/* Top Banner */}
-      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs">
+      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center space-x-3">
           <div className="p-3 bg-emerald-50 rounded-xl text-emerald-600">
             <FileSpreadsheet className="w-6 h-6" />
           </div>
           <div>
-            <h1 className="text-xl font-bold text-slate-900 tracking-tight">Excel Bulk Import</h1>
+            <h1 className="text-xl font-bold text-slate-900 tracking-tight">Bulk Import & Smart Capture</h1>
             <p className="text-xs text-slate-500 mt-0.5">
-              Upload .xlsx or .csv files to import businesses in bulk with duplicate detection and validation.
+              Upload Excel files or snap photos/PDFs with AI Smart Capture to import business records directly.
             </p>
           </div>
         </div>
+
+        <button
+          onClick={() => setIsSmartCaptureOpen(true)}
+          className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-xs flex items-center space-x-2 transition-transform active:scale-98 self-start sm:self-auto"
+        >
+          <Camera className="w-4 h-4 text-blue-200" />
+          <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+          <span>Smart AI Photo/PDF Capture</span>
+        </button>
       </div>
 
-      {/* STEP 1: UPLOAD FILE */}
+      {/* STEP 1: UPLOAD FILE OR SMART CAPTURE */}
       {step === 'upload' && (
-        <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-2xs text-center">
-          <div className="max-w-md mx-auto space-y-4">
-            <div className="border-2 border-dashed border-slate-200 hover:border-blue-400 rounded-2xl p-8 bg-slate-50 hover:bg-blue-50/20 transition-all cursor-pointer relative">
-              <input
-                type="file"
-                accept=".xlsx, .xls, .csv"
-                onChange={handleFileChange}
-                className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-              />
-              <Upload className="w-10 h-10 text-slate-400 mx-auto mb-2" />
-              <p className="text-xs font-semibold text-slate-700">Click to upload or drag & drop</p>
-              <p className="text-[11px] text-slate-400 mt-1">Supports Excel (.xlsx, .xls) and CSV (.csv)</p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Excel File Upload */}
+          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs text-center flex flex-col justify-between space-y-4">
+            <div>
+              <div className="flex items-center justify-center space-x-2 text-emerald-700 font-bold text-sm mb-2">
+                <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
+                <span>Option 1: Excel / CSV Bulk Upload</span>
+              </div>
+              <div className="border-2 border-dashed border-slate-200 hover:border-emerald-400 rounded-2xl p-6 bg-slate-50 hover:bg-emerald-50/20 transition-all cursor-pointer relative my-2">
+                <input
+                  type="file"
+                  accept=".xlsx, .xls, .csv"
+                  onChange={handleFileChange}
+                  className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                />
+                <Upload className="w-8 h-8 text-slate-400 mx-auto mb-2" />
+                <p className="text-xs font-semibold text-slate-700">Click to upload or drag & drop</p>
+                <p className="text-[11px] text-slate-400 mt-1">Supports Excel (.xlsx, .xls) and CSV (.csv)</p>
+              </div>
             </div>
 
-            <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 text-left text-xs text-blue-800 space-y-1">
+            <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-3 text-left text-xs text-emerald-900 space-y-1">
               <p className="font-bold flex items-center">
-                <Info className="w-4 h-4 mr-1 text-blue-600" />
-                Expected Excel Format:
+                <Info className="w-3.5 h-3.5 mr-1 text-emerald-600" />
+                Expected Format:
               </p>
-              <p>Your spreadsheet should contain columns for Company Name, Contact Person, Mobile, Email, Industry, and Status (New, Won, Lost).</p>
+              <p className="text-[11px]">Columns for Company Name, Contact Person, Mobile, Email, Industry, and Status.</p>
             </div>
+          </div>
+
+          {/* Smart AI Photo / PDF OCR */}
+          <div className="bg-white p-6 rounded-2xl border border-blue-200 shadow-2xs text-center flex flex-col justify-between space-y-4 relative overflow-hidden bg-gradient-to-br from-white via-blue-50/30 to-indigo-50/40">
+            <div className="absolute top-0 right-0 p-3">
+              <span className="bg-blue-600 text-white text-[10px] font-extrabold px-2.5 py-0.5 rounded-full shadow-2xs">
+                AI Powered
+              </span>
+            </div>
+
+            <div className="space-y-3 text-left">
+              <div className="flex items-center space-x-2 text-blue-800 font-bold text-sm">
+                <Camera className="w-5 h-5 text-blue-600" />
+                <span>Option 2: Smart Camera & PDF OCR</span>
+              </div>
+              <p className="text-xs text-slate-600">
+                Snap business cards, document photos, or upload PDF lead lists. Gemini AI automatically extracts contact details directly into Firestore records.
+              </p>
+            </div>
+
+            <div className="p-4 bg-white/80 border border-blue-100 rounded-xl text-left text-xs space-y-2 backdrop-blur-2xs">
+              <div className="flex items-center space-x-2 text-slate-700 font-medium text-[11px]">
+                <Sparkles className="w-3.5 h-3.5 text-blue-600" />
+                <span>Auto-detects Company, Phone, Email & Industry</span>
+              </div>
+              <div className="flex items-center space-x-2 text-slate-700 font-medium text-[11px]">
+                <Info className="w-3.5 h-3.5 text-blue-600" />
+                <span>Works with camera photos, JPGs, PNGs, and PDFs</span>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setIsSmartCaptureOpen(true)}
+              className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-xs flex items-center justify-center space-x-2 transition-transform active:scale-98"
+            >
+              <Camera className="w-4 h-4 text-blue-200" />
+              <span>Open Smart AI Camera / Document OCR</span>
+            </button>
           </div>
         </div>
       )}
@@ -720,6 +875,13 @@ export const BulkImport: React.FC<BulkImportProps> = ({ user }) => {
           )}
         </div>
       )}
+
+      {/* Smart Capture Modal (Camera & PDF OCR) */}
+      <SmartCaptureModal
+        isOpen={isSmartCaptureOpen}
+        onClose={() => setIsSmartCaptureOpen(false)}
+        onExtracted={handleSmartCaptureExtracted}
+      />
     </div>
   );
 };
