@@ -153,17 +153,25 @@ export const businessService = {
 
       chunk.forEach(item => {
         const docRef = doc(collection(db, COLLECTION_NAME));
-        const payload = {
+        const payload: Record<string, any> = {
           organizationId: item.organizationId || organizationId || 'org_default',
           companyName: (item.companyName || '').trim(),
           contactPerson: (item.contactPerson || '').trim(),
           mobile: (item.mobile || '').trim(),
           email: (item.email || '').trim(),
           industry: (item.industry || 'General').trim(),
-          status: item.status || 'New',
+          status: item.status || 'NEW',
           createdAt: item.createdAt || new Date().toISOString(),
           updatedAt: item.updatedAt || new Date().toISOString()
         };
+        if (item.city) payload.city = item.city.trim();
+        if (item.leadTemperature) payload.leadTemperature = item.leadTemperature;
+        if (item.assignedTelecallerId) payload.assignedTelecallerId = item.assignedTelecallerId;
+        if (item.assignedTelecallerName) payload.assignedTelecallerName = item.assignedTelecallerName;
+        if (item.assignedSalespersonId) payload.assignedSalespersonId = item.assignedSalespersonId;
+        if (item.assignedSalespersonName) payload.assignedSalespersonName = item.assignedSalespersonName;
+        if (item.nextFollowUpDate) payload.nextFollowUpDate = item.nextFollowUpDate;
+        if (item.nextAction) payload.nextAction = item.nextAction;
         batch.set(docRef, payload);
         chunkMappings.push({ oldId: item.id, ref: docRef, payload });
       });
@@ -229,17 +237,25 @@ export const businessService = {
   // Add a single business
   async addBusiness(data: Omit<Business, 'id'>): Promise<Business> {
     const now = new Date().toISOString();
-    const payload = {
+    const payload: Record<string, any> = {
       organizationId: data.organizationId || 'org_default',
       companyName: (data.companyName || '').trim(),
       contactPerson: (data.contactPerson || '').trim(),
       mobile: (data.mobile || '').trim(),
       email: (data.email || '').trim(),
       industry: (data.industry || 'General').trim(),
-      status: data.status || 'New',
+      status: data.status || 'NEW',
       createdAt: data.createdAt || now,
       updatedAt: data.updatedAt || now
     };
+    if (data.city) payload.city = data.city.trim();
+    if (data.leadTemperature) payload.leadTemperature = data.leadTemperature;
+    if (data.assignedTelecallerId) payload.assignedTelecallerId = data.assignedTelecallerId;
+    if (data.assignedTelecallerName) payload.assignedTelecallerName = data.assignedTelecallerName;
+    if (data.assignedSalespersonId) payload.assignedSalespersonId = data.assignedSalespersonId;
+    if (data.assignedSalespersonName) payload.assignedSalespersonName = data.assignedSalespersonName;
+    if (data.nextFollowUpDate) payload.nextFollowUpDate = data.nextFollowUpDate;
+    if (data.nextAction) payload.nextAction = data.nextAction;
 
     let generatedId = `biz_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
@@ -253,7 +269,7 @@ export const businessService = {
     const newBusiness: Business = {
       id: generatedId,
       ...payload
-    };
+    } as Business;
 
     // Always update local store
     const localStore = getLocalStore();
@@ -268,17 +284,28 @@ export const businessService = {
     if (!businessesData.length) return [];
     
     const now = new Date().toISOString();
-    const preparedRecords = businessesData.map(data => ({
-      organizationId: data.organizationId || 'org_default',
-      companyName: (data.companyName || '').trim(),
-      contactPerson: (data.contactPerson || '').trim(),
-      mobile: (data.mobile || '').trim(),
-      email: (data.email || '').trim(),
-      industry: (data.industry || 'General').trim(),
-      status: data.status || 'New',
-      createdAt: data.createdAt || now,
-      updatedAt: data.updatedAt || now
-    }));
+    const preparedRecords = businessesData.map(data => {
+      const payload: Record<string, any> = {
+        organizationId: data.organizationId || 'org_default',
+        companyName: (data.companyName || '').trim(),
+        contactPerson: (data.contactPerson || '').trim(),
+        mobile: (data.mobile || '').trim(),
+        email: (data.email || '').trim(),
+        industry: (data.industry || 'General').trim(),
+        status: data.status || 'NEW',
+        createdAt: data.createdAt || now,
+        updatedAt: data.updatedAt || now
+      };
+      if (data.city) payload.city = data.city.trim();
+      if (data.leadTemperature) payload.leadTemperature = data.leadTemperature;
+      if (data.assignedTelecallerId) payload.assignedTelecallerId = data.assignedTelecallerId;
+      if (data.assignedTelecallerName) payload.assignedTelecallerName = data.assignedTelecallerName;
+      if (data.assignedSalespersonId) payload.assignedSalespersonId = data.assignedSalespersonId;
+      if (data.assignedSalespersonName) payload.assignedSalespersonName = data.assignedSalespersonName;
+      if (data.nextFollowUpDate) payload.nextFollowUpDate = data.nextFollowUpDate;
+      if (data.nextAction) payload.nextAction = data.nextAction;
+      return payload;
+    });
 
     const chunkSize = 100;
     const inserted: Business[] = [];

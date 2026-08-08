@@ -9,6 +9,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { Activity } from '../types';
+import { businessService } from './businessService';
 
 const COLLECTION_NAME = 'activities';
 const LOCAL_STORAGE_KEY = 'krg_activities_store';
@@ -139,15 +140,22 @@ export const activityService = {
   // Add activity
   async addActivity(data: Omit<Activity, 'id'>): Promise<Activity> {
     const now = new Date().toISOString();
-    const payload = {
+    const payload: Record<string, any> = {
       organizationId: data.organizationId,
       businessId: data.businessId || '',
       businessName: data.businessName || '',
-      type: data.type,
-      notes: data.notes.trim(),
+      type: data.type || data.channel || 'Call',
+      channel: data.channel || data.type || 'Call',
+      notes: (data.notes || '').trim(),
       activityDate: data.activityDate || new Date().toISOString().split('T')[0],
       createdAt: now
     };
+
+    if (data.userId) payload.userId = data.userId;
+    if (data.userName) payload.userName = data.userName;
+    if (data.outcome) payload.outcome = data.outcome;
+    if (data.followUpDate) payload.followUpDate = data.followUpDate;
+    if (data.nextAction) payload.nextAction = data.nextAction;
 
     let generatedId = `act_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
@@ -161,11 +169,36 @@ export const activityService = {
     const newActivity: Activity = {
       id: generatedId,
       ...payload
-    };
+    } as Activity;
 
     const localStore = getLocalStore();
     localStore.unshift(newActivity);
     saveLocalStore(localStore);
+
+    // If followUpDate or nextAction or outcome is provided, update parent business
+    if (data.businessId) {
+      const bizUpdate: Record<string, any> = {};
+      if (data.followUpDate) bizUpdate.nextFollowUpDate = data.followUpDate;
+      if (data.nextAction) bizUpdate.nextAction = data.nextAction;
+      
+      // Auto-update lead status to CONTACTED if it was NEW
+      if (data.outcome) {
+        try {
+          const biz = await businessService.getBusinessById(data.businessId);
+          if (biz && (biz.status === 'NEW' || biz.status === 'New')) {
+            bizUpdate.status = 'CONTACTED';
+          }
+        } catch {
+          // ignore error
+        }
+      }
+
+      if (Object.keys(bizUpdate).length > 0) {
+        businessService.updateBusiness(data.businessId, bizUpdate).catch(err => {
+          console.warn('Failed to auto-update business follow-up from activity:', err);
+        });
+      }
+    }
 
     return newActivity;
   },

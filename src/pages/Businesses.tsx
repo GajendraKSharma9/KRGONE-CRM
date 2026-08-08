@@ -17,28 +17,62 @@ import {
   Activity as ActivityIcon,
   Tag,
   CloudUpload,
-  RefreshCw
+  RefreshCw,
+  LayoutGrid,
+  List,
+  Flame,
+  UserCheck,
+  CheckSquare,
+  Square
 } from 'lucide-react';
 import { UserProfile, Business, BusinessStatus, Activity, ActivityType } from '../types';
 import { businessService } from '../services/businessService';
 import { activityService } from '../services/activityService';
+import { authService } from '../services/authService';
 import { Modal } from '../components/Modal';
 import { ConfirmModal } from '../components/ConfirmModal';
+import { CommunicationQuickActions } from '../components/CommunicationQuickActions';
+import { QuickActivityModal } from '../components/QuickActivityModal';
 
 interface BusinessesProps {
   user: UserProfile;
 }
 
+const PIPELINE_STAGES: { key: BusinessStatus; label: string; headerColor: string; badgeColor: string }[] = [
+  { key: 'NEW', label: 'NEW LEADS', headerColor: 'bg-blue-600 text-white', badgeColor: 'bg-blue-50 text-blue-700 border-blue-200' },
+  { key: 'CONTACTED', label: 'CONTACTED', headerColor: 'bg-amber-600 text-white', badgeColor: 'bg-amber-50 text-amber-700 border-amber-200' },
+  { key: 'QUALIFIED', label: 'QUALIFIED', headerColor: 'bg-purple-600 text-white', badgeColor: 'bg-purple-50 text-purple-700 border-purple-200' },
+  { key: 'PROPOSAL', label: 'PROPOSAL', headerColor: 'bg-indigo-600 text-white', badgeColor: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
+  { key: 'WON', label: 'WON', headerColor: 'bg-emerald-600 text-white', badgeColor: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  { key: 'LOST', label: 'LOST', headerColor: 'bg-rose-600 text-white', badgeColor: 'bg-rose-50 text-rose-700 border-rose-200' }
+];
+
 export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
   const [businesses, setBusinesses] = useState<Business[]>([]);
+  const [teamMembers, setTeamMembers] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+
+  // View Mode State
+  const [viewMode, setViewMode] = useState<'kanban' | 'list'>('kanban');
 
   // Filters & Search
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('All');
   const [industryFilter, setIndustryFilter] = useState<string>('All');
+  const [temperatureFilter, setTemperatureFilter] = useState<string>('All');
+  const [telecallerFilter, setTelecallerFilter] = useState<string>('All');
+  const [salespersonFilter, setSalespersonFilter] = useState<string>('All');
+
+  // Bulk Selection & Assignment State
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [bulkTelecaller, setBulkTelecaller] = useState('');
+  const [bulkSalesperson, setBulkSalesperson] = useState('');
+  const [bulkAssigning, setBulkAssigning] = useState(false);
+
+  // Quick Activity Modal Target
+  const [activityTargetBiz, setActivityTargetBiz] = useState<Business | null>(null);
 
   // Modals
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -58,7 +92,13 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
     mobile: '',
     email: '',
     industry: 'Technology',
-    status: 'New' as BusinessStatus
+    city: '',
+    status: 'NEW' as BusinessStatus,
+    temperature: 'WARM' as 'HOT' | 'WARM' | 'COLD',
+    assignedTelecaller: '',
+    assignedSalesperson: '',
+    nextFollowUpDate: '',
+    nextAction: ''
   });
 
   // Quick activity form state inside View Detail modal
@@ -95,20 +135,22 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
     }
   };
 
-  // Load Businesses
+  // Load Businesses & Team Members
   const loadBusinesses = async () => {
     if (!user.organizationId) return;
     try {
       setLoading(true);
       setError('');
-      const [data, unCount] = await Promise.all([
+      const [data, unCount, team] = await Promise.all([
         businessService.getBusinesses(user.organizationId),
-        businessService.getUnsyncedCount(user.organizationId)
+        businessService.getUnsyncedCount(user.organizationId),
+        authService.getTeamMembers(user.organizationId)
       ]);
       setBusinesses(data);
       setUnsyncedCount(unCount);
+      setTeamMembers(team);
     } catch (err: any) {
-      console.error('Error fetching businesses:', err);
+      console.error('Error fetching businesses / team:', err);
       setError(err.message || 'Failed to load businesses.');
     } finally {
       setLoading(false);
@@ -119,6 +161,19 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
     loadBusinesses();
   }, [user.organizationId]);
 
+  // Handle URL Query Params on mount (e.g., ?unassigned=true from dashboard)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('unassigned') === 'true' || params.get('filter') === 'unassigned') {
+      setTelecallerFilter('Unassigned');
+      setSalespersonFilter('Unassigned');
+    } else if (params.get('telecaller')) {
+      setTelecallerFilter(params.get('telecaller')!);
+    } else if (params.get('salesperson')) {
+      setSalespersonFilter(params.get('salesperson')!);
+    }
+  }, []);
+
   // Extract unique industries for filter
   const industries = useMemo(() => {
     const set = new Set<string>();
@@ -128,6 +183,70 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
     return Array.from(set);
   }, [businesses]);
 
+  // Stage Update Handler
+  const handleUpdateStage = async (bizId: string, newStage: BusinessStatus) => {
+    try {
+      await businessService.updateBusiness(bizId, { status: newStage });
+      setBusinesses(prev => prev.map(b => b.id === bizId ? { ...b, status: newStage } : b));
+      setSuccessMessage(`Lead moved to ${newStage}`);
+      setTimeout(() => setSuccessMessage(''), 3000);
+    } catch (err: any) {
+      console.error('Failed to update stage:', err);
+      alert('Failed to update stage: ' + err.message);
+    }
+  };
+
+  // Bulk Selection Handlers
+  const toggleSelectAll = () => {
+    if (selectedIds.length === filteredBusinesses.length) {
+      setSelectedIds([]);
+    } else {
+      setSelectedIds(filteredBusinesses.map(b => b.id).filter(Boolean) as string[]);
+    }
+  };
+
+  const toggleSelectOne = (id: string) => {
+    setSelectedIds(prev => 
+      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
+    );
+  };
+
+  const handleBulkAssign = async () => {
+    if (selectedIds.length === 0) return;
+    if (!bulkTelecaller && !bulkSalesperson) {
+      alert('Please select a Telecaller or Salesperson to assign.');
+      return;
+    }
+
+    try {
+      setBulkAssigning(true);
+      setError('');
+      const updates: Record<string, any> = {};
+      if (bulkTelecaller) {
+        updates.assignedTelecaller = bulkTelecaller === '__NONE__' ? '' : bulkTelecaller;
+      }
+      if (bulkSalesperson) {
+        updates.assignedSalesperson = bulkSalesperson === '__NONE__' ? '' : bulkSalesperson;
+      }
+
+      await Promise.all(
+        selectedIds.map(id => businessService.updateBusiness(id, updates))
+      );
+
+      setSuccessMessage(`Successfully updated assignment for ${selectedIds.length} lead(s)!`);
+      setTimeout(() => setSuccessMessage(''), 4000);
+      setSelectedIds([]);
+      setBulkTelecaller('');
+      setBulkSalesperson('');
+      await loadBusinesses();
+    } catch (err: any) {
+      console.error('Failed bulk assignment:', err);
+      setError('Failed bulk assignment: ' + err.message);
+    } finally {
+      setBulkAssigning(false);
+    }
+  };
+
   // Filtered Businesses
   const filteredBusinesses = useMemo(() => {
     return businesses.filter(b => {
@@ -135,19 +254,51 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
       const query = searchQuery.toLowerCase().trim();
       const matchesSearch = !query || 
         b.companyName.toLowerCase().includes(query) ||
-        b.contactPerson.toLowerCase().includes(query) ||
-        b.mobile.toLowerCase().includes(query) ||
-        b.email.toLowerCase().includes(query);
+        (b.contactPerson || '').toLowerCase().includes(query) ||
+        (b.mobile || '').toLowerCase().includes(query) ||
+        (b.email || '').toLowerCase().includes(query) ||
+        (b.city || '').toLowerCase().includes(query);
 
-      // Status
-      const matchesStatus = statusFilter === 'All' || b.status === statusFilter;
+      // Status Filter
+      const bStatus = (b.status || 'NEW').toUpperCase();
+      const matchesStatus = statusFilter === 'All' || bStatus === statusFilter.toUpperCase();
 
-      // Industry
+      // Industry Filter
       const matchesIndustry = industryFilter === 'All' || b.industry === industryFilter;
 
-      return matchesSearch && matchesStatus && matchesIndustry;
+      // Temperature / My Leads Filter
+      let matchesTemp = true;
+      if (temperatureFilter === 'HOT') matchesTemp = b.temperature === 'HOT';
+      else if (temperatureFilter === 'WARM') matchesTemp = b.temperature === 'WARM';
+      else if (temperatureFilter === 'COLD') matchesTemp = b.temperature === 'COLD';
+      else if (temperatureFilter === 'MY_LEADS') {
+        const uName = (user.name || user.email || '').toLowerCase();
+        const tele = (b.assignedTelecaller || b.assignedTelecallerName || '').toLowerCase();
+        const sales = (b.assignedSalesperson || b.assignedSalespersonName || '').toLowerCase();
+        matchesTemp = (tele && tele.includes(uName)) || (sales && sales.includes(uName)) || (!tele && !sales);
+      }
+
+      // Telecaller Filter
+      let matchesTelecaller = true;
+      if (telecallerFilter === 'Unassigned') {
+        matchesTelecaller = !b.assignedTelecaller && !b.assignedTelecallerName;
+      } else if (telecallerFilter !== 'All') {
+        const tName = (b.assignedTelecaller || b.assignedTelecallerName || '').toLowerCase();
+        matchesTelecaller = tName.includes(telecallerFilter.toLowerCase());
+      }
+
+      // Salesperson Filter
+      let matchesSalesperson = true;
+      if (salespersonFilter === 'Unassigned') {
+        matchesSalesperson = !b.assignedSalesperson && !b.assignedSalespersonName;
+      } else if (salespersonFilter !== 'All') {
+        const sName = (b.assignedSalesperson || b.assignedSalespersonName || '').toLowerCase();
+        matchesSalesperson = sName.includes(salespersonFilter.toLowerCase());
+      }
+
+      return matchesSearch && matchesStatus && matchesIndustry && matchesTemp && matchesTelecaller && matchesSalesperson;
     });
-  }, [businesses, searchQuery, statusFilter, industryFilter]);
+  }, [businesses, searchQuery, statusFilter, industryFilter, temperatureFilter, telecallerFilter, salespersonFilter, user]);
 
   // Open Add Modal
   const handleOpenAdd = () => {
@@ -157,7 +308,13 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
       mobile: '',
       email: '',
       industry: 'Technology',
-      status: 'New'
+      city: '',
+      status: 'NEW' as BusinessStatus,
+      temperature: 'WARM',
+      assignedTelecaller: user.role === 'Telecaller' ? (user.displayName || user.email) : '',
+      assignedSalesperson: user.role === 'Salesperson' ? (user.displayName || user.email) : '',
+      nextFollowUpDate: new Date().toISOString().split('T')[0],
+      nextAction: 'Initial contact call'
     });
     setIsAddModalOpen(true);
   };
@@ -171,7 +328,13 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
       mobile: biz.mobile || '',
       email: biz.email || '',
       industry: biz.industry || 'General',
-      status: biz.status
+      city: biz.city || '',
+      status: biz.status || 'NEW',
+      temperature: biz.temperature || 'WARM',
+      assignedTelecaller: biz.assignedTelecaller || '',
+      assignedSalesperson: biz.assignedSalesperson || '',
+      nextFollowUpDate: biz.nextFollowUpDate || '',
+      nextAction: biz.nextAction || ''
     });
     setIsEditModalOpen(true);
   };
@@ -213,7 +376,13 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
         mobile: formData.mobile,
         email: formData.email,
         industry: formData.industry,
+        city: formData.city,
         status: formData.status,
+        temperature: formData.temperature,
+        assignedTelecaller: formData.assignedTelecaller,
+        assignedSalesperson: formData.assignedSalesperson,
+        nextFollowUpDate: formData.nextFollowUpDate,
+        nextAction: formData.nextAction,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       });
@@ -242,7 +411,13 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
         mobile: formData.mobile,
         email: formData.email,
         industry: formData.industry,
-        status: formData.status
+        city: formData.city,
+        status: formData.status,
+        temperature: formData.temperature,
+        assignedTelecaller: formData.assignedTelecaller,
+        assignedSalesperson: formData.assignedSalesperson,
+        nextFollowUpDate: formData.nextFollowUpDate,
+        nextAction: formData.nextAction
       });
 
       setBusinesses(prev => prev.map(b => b.id === selectedBusiness.id ? {
@@ -413,116 +588,503 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
         </div>
       )}
 
-      {/* Search and Filters Bar */}
-      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-2xs space-y-3 md:space-y-0 md:flex md:items-center md:space-x-4">
-        {/* Search */}
+      {/* Search, Filters and View Toggle Bar */}
+      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-2xs space-y-3 md:space-y-0 md:flex md:items-center md:justify-between md:space-x-4">
+        {/* Search Input */}
         <div className="relative flex-1">
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search company, contact, phone, email..."
+            placeholder="Search company, contact, mobile, email, city..."
             className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
           />
         </div>
 
-        <div className="flex items-center space-x-3">
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Telecaller Filter */}
+          <select
+            value={telecallerFilter}
+            onChange={(e) => setTelecallerFilter(e.target.value)}
+            className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2 text-xs text-slate-700 font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="All">All Telecallers</option>
+            <option value="Unassigned">⚠️ Unassigned Telecaller</option>
+            {teamMembers
+              .filter(m => m.role === 'Telecaller' || m.role === 'Manager')
+              .map(m => (
+                <option key={m.uid} value={m.name || m.email}>
+                  📞 {m.name || m.email}
+                </option>
+              ))
+            }
+          </select>
+
+          {/* Salesperson Filter */}
+          <select
+            value={salespersonFilter}
+            onChange={(e) => setSalespersonFilter(e.target.value)}
+            className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2 text-xs text-slate-700 font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="All">All Salespeople</option>
+            <option value="Unassigned">⚠️ Unassigned Salesperson</option>
+            {teamMembers
+              .filter(m => m.role === 'Salesperson' || m.role === 'Manager')
+              .map(m => (
+                <option key={m.uid} value={m.name || m.email}>
+                  💼 {m.name || m.email}
+                </option>
+              ))
+            }
+          </select>
+
+          {/* Temperature / Priority Filter */}
+          <select
+            value={temperatureFilter}
+            onChange={(e) => setTemperatureFilter(e.target.value)}
+            className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2 text-xs text-slate-700 font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="All">All Lead Temp</option>
+            <option value="HOT">🔥 HOT Leads</option>
+            <option value="WARM">☀️ WARM Leads</option>
+            <option value="COLD">❄️ COLD Leads</option>
+            <option value="MY_LEADS">👤 My Assigned Leads</option>
+          </select>
+
           {/* Status Filter */}
-          <div className="flex items-center space-x-2">
-            <Filter className="w-3.5 h-3.5 text-slate-400" />
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-700 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="All">All Statuses</option>
-              <option value="New">New</option>
-              <option value="Won">Won</option>
-              <option value="Lost">Lost</option>
-            </select>
-          </div>
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2 text-xs text-slate-700 font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="All">All Statuses</option>
+            <option value="NEW">NEW</option>
+            <option value="CONTACTED">CONTACTED</option>
+            <option value="QUALIFIED">QUALIFIED</option>
+            <option value="PROPOSAL">PROPOSAL</option>
+            <option value="WON">WON</option>
+            <option value="LOST">LOST</option>
+          </select>
 
           {/* Industry Filter */}
           <select
             value={industryFilter}
             onChange={(e) => setIndustryFilter(e.target.value)}
-            className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-700 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2 text-xs text-slate-700 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             <option value="All">All Industries</option>
             {industries.map(ind => (
               <option key={ind} value={ind}>{ind}</option>
             ))}
           </select>
+
+          {/* VIEW SWITCHER TOGGLE */}
+          <div className="flex items-center bg-slate-100 p-1 rounded-lg border border-slate-200">
+            <button
+              onClick={() => setViewMode('kanban')}
+              className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all flex items-center space-x-1 ${
+                viewMode === 'kanban'
+                  ? 'bg-blue-600 text-white shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+              title="Kanban Visual Lead Pipeline"
+            >
+              <LayoutGrid className="w-3.5 h-3.5" />
+              <span>Pipeline</span>
+            </button>
+            <button
+              onClick={() => setViewMode('list')}
+              className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all flex items-center space-x-1 ${
+                viewMode === 'list'
+                  ? 'bg-blue-600 text-white shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+              title="List Directory Table View"
+            >
+              <List className="w-3.5 h-3.5" />
+              <span>Table</span>
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Main Content Table / List */}
+      {/* BULK LEAD ASSIGNMENT ACTION BAR */}
+      {selectedIds.length > 0 && (
+        <div className="bg-slate-900 text-white p-3.5 rounded-xl shadow-lg border border-slate-700 flex flex-wrap items-center justify-between gap-3 animate-in fade-in slide-in-from-top-2">
+          <div className="flex items-center space-x-2">
+            <span className="bg-blue-600 text-white font-extrabold text-xs px-2.5 py-1 rounded-md">
+              {selectedIds.length} Selected
+            </span>
+            <span className="text-xs text-slate-300 font-bold">Bulk Assign Lead Ownership:</span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={bulkTelecaller}
+              onChange={(e) => setBulkTelecaller(e.target.value)}
+              className="bg-slate-800 text-white border border-slate-700 text-xs font-semibold rounded-lg px-2.5 py-1.5 focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">-- Assign Telecaller --</option>
+              <option value="__NONE__">(Unassign Telecaller)</option>
+              {teamMembers
+                .filter(m => m.role === 'Telecaller' || m.role === 'Manager')
+                .map(m => (
+                  <option key={m.uid} value={m.name || m.email}>
+                    📞 {m.name || m.email} ({m.role})
+                  </option>
+                ))
+              }
+            </select>
+
+            <select
+              value={bulkSalesperson}
+              onChange={(e) => setBulkSalesperson(e.target.value)}
+              className="bg-slate-800 text-white border border-slate-700 text-xs font-semibold rounded-lg px-2.5 py-1.5 focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">-- Assign Salesperson --</option>
+              <option value="__NONE__">(Unassign Salesperson)</option>
+              {teamMembers
+                .filter(m => m.role === 'Salesperson' || m.role === 'Manager')
+                .map(m => (
+                  <option key={m.uid} value={m.name || m.email}>
+                    💼 {m.name || m.email} ({m.role})
+                  </option>
+                ))
+              }
+            </select>
+
+            <button
+              type="button"
+              onClick={handleBulkAssign}
+              disabled={bulkAssigning}
+              className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-extrabold px-3.5 py-1.5 rounded-lg shadow-xs transition-colors flex items-center space-x-1.5 cursor-pointer disabled:opacity-50"
+            >
+              <UserCheck className="w-3.5 h-3.5" />
+              <span>{bulkAssigning ? 'Assigning...' : 'ASSIGN SELECTED'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSelectedIds([])}
+              className="text-slate-400 hover:text-white text-xs font-semibold px-2 py-1"
+            >
+              Deselect All
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Main Content Area */}
       {loading ? (
-        <div className="py-16 text-center">
+        <div className="py-16 text-center bg-white rounded-xl border border-slate-200">
           <div className="w-8 h-8 border-3 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-2"></div>
-          <p className="text-xs text-slate-400">Loading business records...</p>
+          <p className="text-xs text-slate-400 font-medium">Loading sales pipeline records...</p>
         </div>
       ) : filteredBusinesses.length === 0 ? (
         <div className="bg-white rounded-xl border border-slate-200 p-12 text-center">
           <Building2 className="w-12 h-12 text-slate-300 mx-auto mb-3" />
           <h3 className="text-sm font-bold text-slate-700 mb-1">No businesses found</h3>
           <p className="text-xs text-slate-400 max-w-sm mx-auto mb-4">
-            {searchQuery || statusFilter !== 'All' || industryFilter !== 'All'
-              ? 'No businesses match your current filter parameters.'
-              : 'No businesses yet. Start by creating a new business or bulk importing an Excel file.'}
+            {searchQuery || statusFilter !== 'All' || industryFilter !== 'All' || temperatureFilter !== 'All'
+              ? 'No businesses match your current search and filter criteria.'
+              : 'No businesses yet. Start by creating a new lead or importing contacts.'}
           </p>
           <button
             onClick={handleOpenAdd}
             className="inline-flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white font-semibold text-xs rounded-lg hover:bg-blue-700 transition-colors"
           >
             <Plus className="w-4 h-4" />
-            <span>Add Business</span>
+            <span>Add Business Lead</span>
           </button>
         </div>
+      ) : viewMode === 'kanban' ? (
+        /* KANBAN VISUAL LEAD PIPELINE VIEW */
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 overflow-x-auto pb-4">
+          {PIPELINE_STAGES.map(stage => {
+            const stageLeads = filteredBusinesses.filter(
+              b => (b.status || 'NEW').toUpperCase() === stage.key
+            );
+
+            return (
+              <div
+                key={stage.key}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const bizId = e.dataTransfer.getData('text/plain');
+                  if (bizId) handleUpdateStage(bizId, stage.key);
+                }}
+                className="bg-slate-100/70 rounded-xl p-2.5 border border-slate-200/80 flex flex-col min-h-[500px]"
+              >
+                {/* Column Header */}
+                <div className={`p-2 rounded-lg ${stage.headerColor} flex items-center justify-between mb-3 shadow-2xs`}>
+                  <span className="font-black text-[11px] tracking-wider uppercase">{stage.label}</span>
+                  <span className="bg-white/20 px-2 py-0.5 rounded-full text-[10px] font-bold">
+                    {stageLeads.length}
+                  </span>
+                </div>
+
+                {/* Cards Container */}
+                <div className="space-y-2.5 flex-1 overflow-y-auto">
+                  {stageLeads.length === 0 ? (
+                    <div className="p-4 text-center border-2 border-dashed border-slate-200 rounded-xl text-[11px] text-slate-400 font-medium">
+                      Drop lead here
+                    </div>
+                  ) : (
+                    stageLeads.map(biz => (
+                      <div
+                        key={biz.id}
+                        draggable
+                        onDragStart={(e) => e.dataTransfer.setData('text/plain', biz.id || '')}
+                        className={`p-3 rounded-xl border shadow-2xs hover:shadow-md transition-all space-y-2 cursor-grab active:cursor-grabbing group ${
+                          biz.id && selectedIds.includes(biz.id)
+                            ? 'bg-blue-50/90 border-blue-400 ring-2 ring-blue-500/20'
+                            : 'bg-white border-slate-200'
+                        }`}
+                      >
+                        {/* Header: Select Checkbox + Company Name + Temp */}
+                        <div className="flex items-start justify-between gap-1.5">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (biz.id) toggleSelectOne(biz.id);
+                            }}
+                            className="mt-0.5 text-slate-400 hover:text-blue-600 transition-colors shrink-0"
+                            title={biz.id && selectedIds.includes(biz.id) ? 'Deselect lead' : 'Select lead for bulk assignment'}
+                          >
+                            {biz.id && selectedIds.includes(biz.id) ? (
+                              <CheckSquare className="w-4 h-4 text-blue-600 fill-blue-50" />
+                            ) : (
+                              <Square className="w-4 h-4" />
+                            )}
+                          </button>
+
+                          <div className="min-w-0 flex-1">
+                            <h4
+                              onClick={() => handleOpenView(biz)}
+                              className="font-bold text-xs text-slate-900 hover:text-blue-600 transition-colors cursor-pointer truncate"
+                              title={biz.companyName}
+                            >
+                              {biz.companyName}
+                            </h4>
+                            <p className="text-[11px] text-slate-500 truncate">
+                              {biz.contactPerson || 'No contact'}
+                            </p>
+                          </div>
+
+                          {biz.temperature && (
+                            <span className={`px-1.5 py-0.5 text-[9px] font-extrabold rounded-md border shrink-0 ${
+                              biz.temperature === 'HOT'
+                                ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                : biz.temperature === 'WARM'
+                                ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                : 'bg-blue-50 text-blue-700 border-blue-200'
+                            }`}>
+                              {biz.temperature === 'HOT' ? '🔥 HOT' : biz.temperature === 'WARM' ? '☀️ WARM' : '❄️ COLD'}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Assigned + Follow up details */}
+                        <div className="text-[10px] space-y-0.5 bg-slate-50 p-1.5 rounded-lg border border-slate-100">
+                          {(biz.assignedTelecaller || biz.assignedSalesperson) && (
+                            <p className="text-slate-600 font-medium truncate">
+                              👤 {biz.assignedTelecaller || biz.assignedSalesperson}
+                            </p>
+                          )}
+                          {biz.nextFollowUpDate && (
+                            <p className="text-slate-700 font-semibold flex items-center">
+                              <Clock className="w-3 h-3 mr-1 text-slate-400" />
+                              {biz.nextFollowUpDate}
+                            </p>
+                          )}
+                          {biz.nextAction && (
+                            <p className="text-blue-700 font-medium truncate">
+                              🎯 {biz.nextAction}
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Communication Quick Actions */}
+                        <div className="pt-1 border-t border-slate-100 flex items-center justify-between">
+                          <CommunicationQuickActions
+                            mobile={biz.mobile}
+                            email={biz.email}
+                            contactPerson={biz.contactPerson}
+                            companyName={biz.companyName}
+                            onLogActivity={() => setActivityTargetBiz(biz)}
+                            size="sm"
+                          />
+                        </div>
+
+                        {/* Footer Controls */}
+                        <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-[10px]">
+                          <select
+                            value={stage.key}
+                            onChange={(e) => biz.id && handleUpdateStage(biz.id, e.target.value as BusinessStatus)}
+                            className="bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5 font-bold text-slate-700 focus:outline-none"
+                          >
+                            {PIPELINE_STAGES.map(s => (
+                              <option key={s.key} value={s.key}>Move: {s.label}</option>
+                            ))}
+                          </select>
+
+                          <div className="flex items-center space-x-1">
+                            <button
+                              onClick={() => handleOpenEdit(biz)}
+                              className="p-1 text-slate-400 hover:text-slate-700 rounded"
+                              title="Edit"
+                            >
+                              <Edit3 className="w-3 h-3" />
+                            </button>
+                            <button
+                              onClick={() => handleOpenDelete(biz)}
+                              className="p-1 text-slate-400 hover:text-rose-600 rounded"
+                              title="Delete"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       ) : (
+        /* DIRECTORY TABLE VIEW */
         <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase tracking-wider">
                 <tr>
-                  <th className="px-6 py-3.5">Company Name</th>
-                  <th className="px-6 py-3.5">Contact Person</th>
-                  <th className="px-6 py-3.5">Mobile</th>
-                  <th className="px-6 py-3.5">Email</th>
-                  <th className="px-6 py-3.5">Industry</th>
-                  <th className="px-6 py-3.5">Status</th>
-                  <th className="px-6 py-3.5 text-right">Actions</th>
+                  <th className="px-3 py-3.5 w-10 text-center">
+                    <button
+                      type="button"
+                      onClick={toggleSelectAll}
+                      className="text-slate-400 hover:text-blue-600 transition-colors"
+                      title={selectedIds.length === filteredBusinesses.length && filteredBusinesses.length > 0 ? 'Deselect all' : 'Select all'}
+                    >
+                      {selectedIds.length === filteredBusinesses.length && filteredBusinesses.length > 0 ? (
+                        <CheckSquare className="w-4 h-4 text-blue-600 fill-blue-50" />
+                      ) : (
+                        <Square className="w-4 h-4" />
+                      )}
+                    </button>
+                  </th>
+                  <th className="px-4 py-3.5">Company / City</th>
+                  <th className="px-4 py-3.5">Contact Person</th>
+                  <th className="px-4 py-3.5">Status & Temp</th>
+                  <th className="px-4 py-3.5">Quick Actions</th>
+                  <th className="px-4 py-3.5">Assigned To</th>
+                  <th className="px-4 py-3.5">Next Follow-Up</th>
+                  <th className="px-4 py-3.5 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-slate-700 font-medium">
                 {filteredBusinesses.map((biz) => (
-                  <tr key={biz.id} className="hover:bg-slate-50/80 transition-colors">
-                    <td className="px-6 py-4">
-                      <p className="font-bold text-slate-900">{biz.companyName}</p>
-                    </td>
-                    <td className="px-6 py-4 text-slate-600">{biz.contactPerson || '-'}</td>
-                    <td className="px-6 py-4 font-mono text-slate-600">{biz.mobile || '-'}</td>
-                    <td className="px-6 py-4 text-slate-600">{biz.email || '-'}</td>
-                    <td className="px-6 py-4">
-                      <span className="px-2 py-0.5 bg-slate-100 text-slate-600 font-semibold rounded text-[11px]">
-                        {biz.industry || 'General'}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4">
-                      <span
-                        className={`inline-flex items-center px-2.5 py-1 text-[11px] font-semibold rounded-full ${
-                          biz.status === 'Won'
-                            ? 'bg-emerald-50 text-emerald-700'
-                            : biz.status === 'Lost'
-                            ? 'bg-rose-50 text-rose-700'
-                            : 'bg-blue-50 text-blue-700'
-                        }`}
+                  <tr 
+                    key={biz.id} 
+                    className={`transition-colors ${
+                      biz.id && selectedIds.includes(biz.id) ? 'bg-blue-50/70 hover:bg-blue-50' : 'hover:bg-slate-50/80'
+                    }`}
+                  >
+                    <td className="px-3 py-3.5 text-center">
+                      <button
+                        type="button"
+                        onClick={() => biz.id && toggleSelectOne(biz.id)}
+                        className="text-slate-400 hover:text-blue-600 transition-colors"
                       >
-                        {biz.status}
-                      </span>
+                        {biz.id && selectedIds.includes(biz.id) ? (
+                          <CheckSquare className="w-4 h-4 text-blue-600 fill-blue-50" />
+                        ) : (
+                          <Square className="w-4 h-4" />
+                        )}
+                      </button>
                     </td>
-                    <td className="px-6 py-4 text-right">
+                    <td className="px-4 py-3.5">
+                      <p className="font-bold text-slate-900">{biz.companyName}</p>
+                      <p className="text-[11px] text-slate-500 flex items-center mt-0.5">
+                        {biz.city ? `${biz.city} • ` : ''}{biz.industry || 'General'}
+                      </p>
+                    </td>
+                    <td className="px-5 py-3.5">
+                      <p className="text-slate-800 font-medium">{biz.contactPerson || '-'}</p>
+                      <p className="text-[11px] font-mono text-slate-500 mt-0.5">{biz.mobile || biz.email || '-'}</p>
+                    </td>
+                    <td className="px-5 py-3.5">
+                      <div className="flex items-center space-x-1.5">
+                        <select
+                          value={(biz.status || 'NEW').toUpperCase()}
+                          onChange={(e) => biz.id && handleUpdateStage(biz.id, e.target.value as BusinessStatus)}
+                          className="px-2 py-0.5 text-[10px] font-extrabold rounded-md border bg-white focus:outline-none"
+                        >
+                          {PIPELINE_STAGES.map(s => (
+                            <option key={s.key} value={s.key}>{s.label}</option>
+                          ))}
+                        </select>
+                        {biz.temperature && (
+                          <span
+                            className={`px-1.5 py-0.5 text-[10px] font-bold rounded ${
+                              biz.temperature === 'HOT'
+                                ? 'bg-rose-100 text-rose-800'
+                                : biz.temperature === 'WARM'
+                                ? 'bg-amber-100 text-amber-800'
+                                : 'bg-blue-100 text-blue-800'
+                            }`}
+                          >
+                            {biz.temperature === 'HOT' ? '🔥 HOT' : biz.temperature === 'WARM' ? '☀️ WARM' : '❄️ COLD'}
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-5 py-3.5">
+                      <CommunicationQuickActions
+                        mobile={biz.mobile}
+                        email={biz.email}
+                        contactPerson={biz.contactPerson}
+                        companyName={biz.companyName}
+                        onLogActivity={() => setActivityTargetBiz(biz)}
+                        size="sm"
+                      />
+                    </td>
+                    <td className="px-5 py-3.5 text-[11px]">
+                      {biz.assignedTelecaller || biz.assignedSalesperson ? (
+                        <div>
+                          {biz.assignedTelecaller && (
+                            <p className="text-slate-700 font-medium">📞 {biz.assignedTelecaller}</p>
+                          )}
+                          {biz.assignedSalesperson && (
+                            <p className="text-slate-700 font-medium">💼 {biz.assignedSalesperson}</p>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-slate-400 italic">Unassigned</span>
+                      )}
+                    </td>
+                    <td className="px-5 py-3.5">
+                      {biz.nextFollowUpDate ? (
+                        <div>
+                          <p className="font-mono text-[11px] font-bold text-slate-800 flex items-center">
+                            <Clock className="w-3 h-3 mr-1 text-slate-400" />
+                            {biz.nextFollowUpDate}
+                          </p>
+                          {biz.nextAction && (
+                            <p className="text-[10px] text-slate-500 truncate max-w-[120px]" title={biz.nextAction}>
+                              {biz.nextAction}
+                            </p>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-slate-400 text-[11px]">-</span>
+                      )}
+                    </td>
+                    <td className="px-5 py-3.5 text-right">
                       <div className="flex items-center justify-end space-x-2">
                         <button
                           onClick={() => handleOpenView(biz)}
@@ -616,17 +1178,104 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
             </div>
           </div>
 
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Status</label>
-            <select
-              value={formData.status}
-              onChange={(e) => setFormData({ ...formData, status: e.target.value as BusinessStatus })}
-              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:bg-white"
-            >
-              <option value="New">New</option>
-              <option value="Won">Won</option>
-              <option value="Lost">Lost</option>
-            </select>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">City</label>
+              <input
+                type="text"
+                value={formData.city}
+                onChange={(e) => setFormData({ ...formData, city: e.target.value })}
+                placeholder="New York, Mumbai..."
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:bg-white"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Lead Status</label>
+              <select
+                value={formData.status}
+                onChange={(e) => setFormData({ ...formData, status: e.target.value as BusinessStatus })}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:bg-white font-medium"
+              >
+                <option value="NEW">NEW</option>
+                <option value="CONTACTED">CONTACTED</option>
+                <option value="QUALIFIED">QUALIFIED</option>
+                <option value="WON">WON</option>
+                <option value="LOST">LOST</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Lead Temperature</label>
+              <select
+                value={formData.temperature}
+                onChange={(e) => setFormData({ ...formData, temperature: e.target.value as 'HOT' | 'WARM' | 'COLD' })}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:bg-white font-medium"
+              >
+                <option value="HOT">🔥 HOT</option>
+                <option value="WARM">☀️ WARM</option>
+                <option value="COLD">❄️ COLD</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Assigned Telecaller</label>
+              <select
+                value={formData.assignedTelecaller}
+                onChange={(e) => setFormData({ ...formData, assignedTelecaller: e.target.value })}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:bg-white font-medium"
+              >
+                <option value="">-- Unassigned --</option>
+                {teamMembers
+                  .filter(m => m.role === 'Telecaller' || m.role === 'Manager')
+                  .map(m => (
+                    <option key={m.uid} value={m.name || m.email}>
+                      📞 {m.name || m.email} ({m.role})
+                    </option>
+                  ))
+                }
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Assigned Salesperson</label>
+              <select
+                value={formData.assignedSalesperson}
+                onChange={(e) => setFormData({ ...formData, assignedSalesperson: e.target.value })}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:bg-white font-medium"
+              >
+                <option value="">-- Unassigned --</option>
+                {teamMembers
+                  .filter(m => m.role === 'Salesperson' || m.role === 'Manager')
+                  .map(m => (
+                    <option key={m.uid} value={m.name || m.email}>
+                      💼 {m.name || m.email} ({m.role})
+                    </option>
+                  ))
+                }
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Next Follow-Up Date</label>
+              <input
+                type="date"
+                value={formData.nextFollowUpDate}
+                onChange={(e) => setFormData({ ...formData, nextFollowUpDate: e.target.value })}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:bg-white"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Next Action</label>
+              <input
+                type="text"
+                value={formData.nextAction}
+                onChange={(e) => setFormData({ ...formData, nextAction: e.target.value })}
+                placeholder="e.g. Call demo, send quote, follow up..."
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:bg-white"
+              />
+            </div>
           </div>
 
           <div className="flex justify-end space-x-3 pt-4 border-t border-slate-100">
@@ -704,17 +1353,104 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
             </div>
           </div>
 
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Status</label>
-            <select
-              value={formData.status}
-              onChange={(e) => setFormData({ ...formData, status: e.target.value as BusinessStatus })}
-              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:bg-white"
-            >
-              <option value="New">New</option>
-              <option value="Won">Won</option>
-              <option value="Lost">Lost</option>
-            </select>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">City</label>
+              <input
+                type="text"
+                value={formData.city}
+                onChange={(e) => setFormData({ ...formData, city: e.target.value })}
+                placeholder="City"
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:bg-white"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Lead Status</label>
+              <select
+                value={formData.status}
+                onChange={(e) => setFormData({ ...formData, status: e.target.value as BusinessStatus })}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:bg-white font-medium"
+              >
+                <option value="NEW">NEW</option>
+                <option value="CONTACTED">CONTACTED</option>
+                <option value="QUALIFIED">QUALIFIED</option>
+                <option value="WON">WON</option>
+                <option value="LOST">LOST</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Lead Temperature</label>
+              <select
+                value={formData.temperature}
+                onChange={(e) => setFormData({ ...formData, temperature: e.target.value as 'HOT' | 'WARM' | 'COLD' })}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:bg-white font-medium"
+              >
+                <option value="HOT">🔥 HOT</option>
+                <option value="WARM">☀️ WARM</option>
+                <option value="COLD">❄️ COLD</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Assigned Telecaller</label>
+              <select
+                value={formData.assignedTelecaller}
+                onChange={(e) => setFormData({ ...formData, assignedTelecaller: e.target.value })}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:bg-white font-medium"
+              >
+                <option value="">-- Unassigned --</option>
+                {teamMembers
+                  .filter(m => m.role === 'Telecaller' || m.role === 'Manager')
+                  .map(m => (
+                    <option key={m.uid} value={m.name || m.email}>
+                      📞 {m.name || m.email} ({m.role})
+                    </option>
+                  ))
+                }
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Assigned Salesperson</label>
+              <select
+                value={formData.assignedSalesperson}
+                onChange={(e) => setFormData({ ...formData, assignedSalesperson: e.target.value })}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:bg-white font-medium"
+              >
+                <option value="">-- Unassigned --</option>
+                {teamMembers
+                  .filter(m => m.role === 'Salesperson' || m.role === 'Manager')
+                  .map(m => (
+                    <option key={m.uid} value={m.name || m.email}>
+                      💼 {m.name || m.email} ({m.role})
+                    </option>
+                  ))
+                }
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Next Follow-Up Date</label>
+              <input
+                type="date"
+                value={formData.nextFollowUpDate}
+                onChange={(e) => setFormData({ ...formData, nextFollowUpDate: e.target.value })}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:bg-white"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Next Action</label>
+              <input
+                type="text"
+                value={formData.nextAction}
+                onChange={(e) => setFormData({ ...formData, nextAction: e.target.value })}
+                placeholder="e.g. Call demo, send quote..."
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:bg-white"
+              />
+            </div>
           </div>
 
           <div className="flex justify-end space-x-3 pt-4 border-t border-slate-100">
@@ -746,7 +1482,19 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
         {selectedBusiness && (
           <div className="space-y-6">
             {/* Overview Header */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs">
+            <div className="space-y-3 bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs">
+              <div className="flex items-center justify-between pb-2 border-b border-slate-200">
+                <span className="font-bold text-slate-800 text-sm">{selectedBusiness.companyName}</span>
+                <CommunicationQuickActions
+                  mobile={selectedBusiness.mobile}
+                  email={selectedBusiness.email}
+                  contactPerson={selectedBusiness.contactPerson}
+                  companyName={selectedBusiness.companyName}
+                  onLogActivity={() => setActivityTargetBiz(selectedBusiness)}
+                  size="sm"
+                />
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
               <div>
                 <span className="text-slate-400 block font-semibold">Contact Person</span>
                 <span className="font-bold text-slate-800 flex items-center mt-0.5">
@@ -785,6 +1533,7 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
                   <Calendar className="w-3.5 h-3.5 mr-1 text-slate-500" />
                   {selectedBusiness.createdAt ? new Date(selectedBusiness.createdAt).toLocaleDateString() : 'N/A'}
                 </span>
+              </div>
               </div>
             </div>
 
@@ -884,6 +1633,17 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
         confirmText="Delete"
         isLoading={saving}
       />
+
+      {/* QUICK ACTIVITY LOG MODAL */}
+      {activityTargetBiz && (
+        <QuickActivityModal
+          isOpen={!!activityTargetBiz}
+          onClose={() => setActivityTargetBiz(null)}
+          business={activityTargetBiz}
+          user={user}
+          onActivitySaved={loadBusinesses}
+        />
+      )}
     </div>
   );
 };
