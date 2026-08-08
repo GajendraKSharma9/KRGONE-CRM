@@ -1,0 +1,71 @@
+{
+  "entities": {
+    "users": {
+      "title": "users",
+      "type": "object",
+      "properties": {
+        "organizationId": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["organizationId", "name", "email"]
+    },
+    "organizations": {
+      "title": "organizations",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["name"]
+    },
+    "businesses": {
+      "title": "businesses",
+      "type": "object",
+      "properties": {
+        "organizationId": { "type": "string" },
+        "companyName": { "type": "string" },
+        "contactPerson": { "type": "string" },
+        "mobile": { "type": "string" },
+        "email": { "type": "string" },
+        "industry": { "type": "string" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["organizationId", "companyName"]
+    },
+    "activities": {
+      "title": "activities",
+      "type": "object",
+      "properties": {
+        "organizationId": { "type": "string" },
+        "businessId": { "type": "string" },
+        "type": { "type": "string" },
+        "notes": { "type": "string" },
+        "activityDate": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["organizationId", "type", "notes"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "users",
+      "description": "User profile collection"
+    },
+    "/organizations/{orgId}": {
+      "schema": "organizations",
+      "description": "Organization collection"
+    },
+    "/businesses/{businessId}": {
+      "schema": "businesses",
+      "description": "Business records collection"
+    },
+    "/activities/{activityId}": {
+      "schema": "activities",
+      "description": "Activity log collection"
+    }
+  }
+}
