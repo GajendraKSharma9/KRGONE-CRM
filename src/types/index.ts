@@ -5,12 +5,14 @@ export interface UserProfile {
   organizationId: string;
   role?: 'Manager' | 'Telecaller' | 'Salesperson';
   active?: boolean;
+  monthlyTarget?: number;
   createdAt: string;
 }
 
 export interface Organization {
   id: string;
   name: string;
+  monthlyTeamTarget?: number;
   createdAt: string;
 }
 
@@ -38,6 +40,10 @@ export interface Business {
   assignedSalespersonName?: string;
   nextFollowUpDate?: string; // YYYY-MM-DD
   nextAction?: string;
+  tags?: string[];
+  leadHealth?: 'HEALTHY' | 'NEEDS ATTENTION' | 'AT RISK';
+  dealValue?: number;
+  expectedClosureDate?: string;
   createdAt: string;
   updatedAt: string;
 }

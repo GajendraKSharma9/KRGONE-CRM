@@ -28,5 +28,13 @@ export const orgService = {
     } catch (error) {
       console.warn('Error updating organization in Firestore:', error);
     }
+  },
+
+  async updateOrganizationTarget(orgId: string, monthlyTeamTarget: number): Promise<void> {
+    try {
+      await updateDoc(doc(db, 'organizations', orgId), { monthlyTeamTarget });
+    } catch (error) {
+      console.warn('Error updating organization target in Firestore:', error);
+    }
   }
 };

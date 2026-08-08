@@ -7,6 +7,7 @@
         "organizationId": { "type": "string" },
         "name": { "type": "string" },
         "email": { "type": "string" },
+        "monthlyTarget": { "type": "number" },
         "createdAt": { "type": "string" }
       },
       "required": ["organizationId", "name", "email"]
@@ -16,6 +17,7 @@
       "type": "object",
       "properties": {
         "name": { "type": "string" },
+        "monthlyTeamTarget": { "type": "number" },
         "createdAt": { "type": "string" }
       },
       "required": ["name"]
@@ -31,6 +33,8 @@
         "email": { "type": "string" },
         "industry": { "type": "string" },
         "status": { "type": "string" },
+        "dealValue": { "type": "number" },
+        "expectedClosureDate": { "type": "string" },
         "createdAt": { "type": "string" },
         "updatedAt": { "type": "string" }
       },

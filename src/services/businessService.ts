@@ -172,6 +172,9 @@ export const businessService = {
         if (item.assignedSalespersonName) payload.assignedSalespersonName = item.assignedSalespersonName;
         if (item.nextFollowUpDate) payload.nextFollowUpDate = item.nextFollowUpDate;
         if (item.nextAction) payload.nextAction = item.nextAction;
+        if (item.tags) payload.tags = item.tags;
+        if (item.dealValue !== undefined) payload.dealValue = item.dealValue;
+        if (item.expectedClosureDate) payload.expectedClosureDate = item.expectedClosureDate;
         batch.set(docRef, payload);
         chunkMappings.push({ oldId: item.id, ref: docRef, payload });
       });
@@ -256,6 +259,9 @@ export const businessService = {
     if (data.assignedSalespersonName) payload.assignedSalespersonName = data.assignedSalespersonName;
     if (data.nextFollowUpDate) payload.nextFollowUpDate = data.nextFollowUpDate;
     if (data.nextAction) payload.nextAction = data.nextAction;
+    if (data.tags) payload.tags = data.tags;
+    if (data.dealValue !== undefined) payload.dealValue = data.dealValue;
+    if (data.expectedClosureDate) payload.expectedClosureDate = data.expectedClosureDate;
 
     let generatedId = `biz_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
@@ -304,6 +310,8 @@ export const businessService = {
       if (data.assignedSalespersonName) payload.assignedSalespersonName = data.assignedSalespersonName;
       if (data.nextFollowUpDate) payload.nextFollowUpDate = data.nextFollowUpDate;
       if (data.nextAction) payload.nextAction = data.nextAction;
+      if (data.dealValue !== undefined) payload.dealValue = data.dealValue;
+      if (data.expectedClosureDate) payload.expectedClosureDate = data.expectedClosureDate;
       return payload;
     });
 

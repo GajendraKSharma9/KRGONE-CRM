@@ -29,10 +29,12 @@ import { UserProfile, Business, BusinessStatus, Activity, ActivityType } from '.
 import { businessService } from '../services/businessService';
 import { activityService } from '../services/activityService';
 import { authService } from '../services/authService';
+import { calculateLeadHealth, exportBusinessesToCSV, calculateLeadVelocity } from '../services/intelligenceService';
 import { Modal } from '../components/Modal';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { CommunicationQuickActions } from '../components/CommunicationQuickActions';
 import { QuickActivityModal } from '../components/QuickActivityModal';
+import { Download, ShieldAlert, HeartPulse, Hash } from 'lucide-react';
 
 interface BusinessesProps {
   user: UserProfile;
@@ -64,6 +66,13 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
   const [temperatureFilter, setTemperatureFilter] = useState<string>('All');
   const [telecallerFilter, setTelecallerFilter] = useState<string>('All');
   const [salespersonFilter, setSalespersonFilter] = useState<string>('All');
+  const [healthFilter, setHealthFilter] = useState<string>('All');
+  const [tagFilter, setTagFilter] = useState<string>('All');
+  const [stuckFilter, setStuckFilter] = useState<boolean>(false);
+  const [staleHotFilter, setStaleHotFilter] = useState<boolean>(false);
+  const [followUpFilter, setFollowUpFilter] = useState<string>('All');
+  const [allActivities, setAllActivities] = useState<Activity[]>([]);
+  const [customTagInput, setCustomTagInput] = useState<string>('');
 
   // Bulk Selection & Assignment State
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -98,7 +107,10 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
     assignedTelecaller: '',
     assignedSalesperson: '',
     nextFollowUpDate: '',
-    nextAction: ''
+    nextAction: '',
+    tags: [] as string[],
+    dealValue: '' as string | number,
+    expectedClosureDate: ''
   });
 
   // Quick activity form state inside View Detail modal
@@ -141,14 +153,16 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
     try {
       setLoading(true);
       setError('');
-      const [data, unCount, team] = await Promise.all([
+      const [data, unCount, team, acts] = await Promise.all([
         businessService.getBusinesses(user.organizationId),
         businessService.getUnsyncedCount(user.organizationId),
-        authService.getTeamMembers(user.organizationId)
+        authService.getTeamMembers(user.organizationId),
+        activityService.getActivities(user.organizationId)
       ]);
       setBusinesses(data);
       setUnsyncedCount(unCount);
       setTeamMembers(team);
+      setAllActivities(acts);
     } catch (err: any) {
       console.error('Error fetching businesses / team:', err);
       setError(err.message || 'Failed to load businesses.');
@@ -161,17 +175,23 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
     loadBusinesses();
   }, [user.organizationId]);
 
-  // Handle URL Query Params on mount (e.g., ?unassigned=true from dashboard)
+  // Handle URL Query Params on mount (e.g., ?unassigned=true, ?health=AT_RISK, etc.)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('unassigned') === 'true' || params.get('filter') === 'unassigned') {
       setTelecallerFilter('Unassigned');
       setSalespersonFilter('Unassigned');
-    } else if (params.get('telecaller')) {
-      setTelecallerFilter(params.get('telecaller')!);
-    } else if (params.get('salesperson')) {
-      setSalespersonFilter(params.get('salesperson')!);
     }
+    if (params.get('telecaller')) setTelecallerFilter(params.get('telecaller')!);
+    if (params.get('salesperson')) setSalespersonFilter(params.get('salesperson')!);
+    if (params.get('health')) setHealthFilter(params.get('health')!);
+    if (params.get('tag')) setTagFilter(params.get('tag')!);
+    if (params.get('temp')) setTemperatureFilter(params.get('temp')!);
+    if (params.get('status')) setStatusFilter(params.get('status')!);
+    if (params.get('stuck') === 'true') setStuckFilter(true);
+    if (params.get('staleHot') === 'true') setStaleHotFilter(true);
+    if (params.get('filter') === 'overdue') setFollowUpFilter('Overdue');
+    if (params.get('filter') === 'today') setFollowUpFilter('Today');
   }, []);
 
   // Extract unique industries for filter
@@ -179,6 +199,17 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
     const set = new Set<string>();
     businesses.forEach(b => {
       if (b.industry) set.add(b.industry);
+    });
+    return Array.from(set);
+  }, [businesses]);
+
+  // Extract unique tags for filter
+  const allTags = useMemo(() => {
+    const set = new Set<string>();
+    businesses.forEach(b => {
+      if (b.tags && Array.isArray(b.tags)) {
+        b.tags.forEach(t => set.add(t));
+      }
     });
     return Array.from(set);
   }, [businesses]);
@@ -296,9 +327,46 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
         matchesSalesperson = sName.includes(salespersonFilter.toLowerCase());
       }
 
-      return matchesSearch && matchesStatus && matchesIndustry && matchesTemp && matchesTelecaller && matchesSalesperson;
+      // Health Filter
+      let matchesHealth = true;
+      if (healthFilter !== 'All') {
+        const health = calculateLeadHealth(b, allActivities);
+        matchesHealth = health === healthFilter;
+      }
+
+      // Tag Filter
+      let matchesTag = true;
+      if (tagFilter !== 'All') {
+        matchesTag = Array.isArray(b.tags) && b.tags.includes(tagFilter);
+      }
+
+      // Stuck Filter (>14 days in same stage without conversion)
+      let matchesStuck = true;
+      if (stuckFilter) {
+        const velocity = calculateLeadVelocity(b, allActivities);
+        matchesStuck = velocity.daysInCurrentStage >= 14 && b.status !== 'WON' && b.status !== 'Won' && b.status !== 'LOST' && b.status !== 'Lost';
+      }
+
+      // Stale Hot Filter (HOT lead with no activity for >3 days)
+      let matchesStaleHot = true;
+      if (staleHotFilter) {
+        const isHot = (b.temperature || b.leadTemperature) === 'HOT';
+        const health = calculateLeadHealth(b, allActivities);
+        matchesStaleHot = isHot && health === 'AT RISK';
+      }
+
+      // Follow-up Filter
+      let matchesFollowUp = true;
+      const todayStr = new Date().toISOString().split('T')[0];
+      if (followUpFilter === 'Overdue') {
+        matchesFollowUp = !!(b.nextFollowUpDate && b.nextFollowUpDate < todayStr && b.status !== 'WON' && b.status !== 'Won' && b.status !== 'LOST' && b.status !== 'Lost');
+      } else if (followUpFilter === 'Today') {
+        matchesFollowUp = b.nextFollowUpDate === todayStr && b.status !== 'WON' && b.status !== 'Won' && b.status !== 'LOST' && b.status !== 'Lost';
+      }
+
+      return matchesSearch && matchesStatus && matchesIndustry && matchesTemp && matchesTelecaller && matchesSalesperson && matchesHealth && matchesTag && matchesStuck && matchesStaleHot && matchesFollowUp;
     });
-  }, [businesses, searchQuery, statusFilter, industryFilter, temperatureFilter, telecallerFilter, salespersonFilter, user]);
+  }, [businesses, searchQuery, statusFilter, industryFilter, temperatureFilter, telecallerFilter, salespersonFilter, healthFilter, tagFilter, stuckFilter, staleHotFilter, followUpFilter, allActivities, user]);
 
   // Open Add Modal
   const handleOpenAdd = () => {
@@ -311,10 +379,13 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
       city: '',
       status: 'NEW' as BusinessStatus,
       temperature: 'WARM',
-      assignedTelecaller: user.role === 'Telecaller' ? (user.displayName || user.email) : '',
-      assignedSalesperson: user.role === 'Salesperson' ? (user.displayName || user.email) : '',
+      assignedTelecaller: user.role === 'Telecaller' ? (user.name || user.email) : '',
+      assignedSalesperson: user.role === 'Salesperson' ? (user.name || user.email) : '',
       nextFollowUpDate: new Date().toISOString().split('T')[0],
-      nextAction: 'Initial contact call'
+      nextAction: 'Initial contact call',
+      tags: [],
+      dealValue: '',
+      expectedClosureDate: ''
     });
     setIsAddModalOpen(true);
   };
@@ -334,7 +405,10 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
       assignedTelecaller: biz.assignedTelecaller || '',
       assignedSalesperson: biz.assignedSalesperson || '',
       nextFollowUpDate: biz.nextFollowUpDate || '',
-      nextAction: biz.nextAction || ''
+      nextAction: biz.nextAction || '',
+      tags: biz.tags || [],
+      dealValue: biz.dealValue !== undefined && biz.dealValue !== null ? biz.dealValue : '',
+      expectedClosureDate: biz.expectedClosureDate || ''
     });
     setIsEditModalOpen(true);
   };
@@ -383,6 +457,9 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
         assignedSalesperson: formData.assignedSalesperson,
         nextFollowUpDate: formData.nextFollowUpDate,
         nextAction: formData.nextAction,
+        tags: formData.tags,
+        dealValue: formData.dealValue !== '' ? Number(formData.dealValue) : undefined,
+        expectedClosureDate: formData.expectedClosureDate || undefined,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       });
@@ -417,12 +494,17 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
         assignedTelecaller: formData.assignedTelecaller,
         assignedSalesperson: formData.assignedSalesperson,
         nextFollowUpDate: formData.nextFollowUpDate,
-        nextAction: formData.nextAction
+        nextAction: formData.nextAction,
+        tags: formData.tags,
+        dealValue: formData.dealValue !== '' ? Number(formData.dealValue) : null,
+        expectedClosureDate: formData.expectedClosureDate || null
       });
 
       setBusinesses(prev => prev.map(b => b.id === selectedBusiness.id ? {
         ...b,
         ...formData,
+        dealValue: formData.dealValue !== '' ? Number(formData.dealValue) : undefined,
+        expectedClosureDate: formData.expectedClosureDate || undefined,
         updatedAt: new Date().toISOString()
       } : b));
 
@@ -521,6 +603,14 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
             title="Refresh from Cloud Firestore"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          </button>
+          <button
+            onClick={() => exportBusinessesToCSV(filteredBusinesses, allActivities)}
+            className="inline-flex items-center justify-center space-x-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs rounded-xl shadow-sm transition-colors cursor-pointer"
+            title="Export filtered leads to Excel/CSV"
+          >
+            <Download className="w-4 h-4" />
+            <span>Export CSV</span>
           </button>
           <button
             onClick={handleOpenAdd}
@@ -667,6 +757,41 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
             <option value="LOST">LOST</option>
           </select>
 
+          {/* Lead Health Filter */}
+          <select
+            value={healthFilter}
+            onChange={(e) => setHealthFilter(e.target.value)}
+            className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2 text-xs text-slate-700 font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="All">All Lead Health</option>
+            <option value="HEALTHY">🟢 HEALTHY</option>
+            <option value="NEEDS ATTENTION">🟡 NEEDS ATTENTION</option>
+            <option value="AT RISK">🔴 AT RISK</option>
+          </select>
+
+          {/* Tag Filter */}
+          <select
+            value={tagFilter}
+            onChange={(e) => setTagFilter(e.target.value)}
+            className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2 text-xs text-slate-700 font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="All">All Tags</option>
+            {allTags.map(tag => (
+              <option key={tag} value={tag}>🏷️ {tag}</option>
+            ))}
+          </select>
+
+          {/* Follow-Up Filter */}
+          <select
+            value={followUpFilter}
+            onChange={(e) => setFollowUpFilter(e.target.value)}
+            className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2 text-xs text-slate-700 font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="All">All Follow-ups</option>
+            <option value="Today">📅 Due Today</option>
+            <option value="Overdue">🚨 Overdue</option>
+          </select>
+
           {/* Industry Filter */}
           <select
             value={industryFilter}
@@ -678,6 +803,31 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
               <option key={ind} value={ind}>{ind}</option>
             ))}
           </select>
+
+          {/* Quick Segment buttons */}
+          <button
+            onClick={() => setStuckFilter(!stuckFilter)}
+            className={`px-2.5 py-2 text-xs font-bold rounded-lg border transition-all flex items-center space-x-1 ${
+              stuckFilter
+                ? 'bg-rose-600 border-rose-600 text-white shadow-xs'
+                : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
+            }`}
+            title="Leads stuck in the current stage for 14+ days"
+          >
+            <span>⏳ Stuck Leads</span>
+          </button>
+
+          <button
+            onClick={() => setStaleHotFilter(!staleHotFilter)}
+            className={`px-2.5 py-2 text-xs font-bold rounded-lg border transition-all flex items-center space-x-1 ${
+              staleHotFilter
+                ? 'bg-amber-500 border-amber-500 text-slate-950 shadow-xs'
+                : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
+            }`}
+            title="HOT leads with no recent activity (3+ days)"
+          >
+            <span>⚠️ Stale Hot</span>
+          </button>
 
           {/* VIEW SWITCHER TOGGLE */}
           <div className="flex items-center bg-slate-100 p-1 rounded-lg border border-slate-200">
@@ -888,7 +1038,7 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
                         </div>
 
                         {/* Assigned + Follow up details */}
-                        <div className="text-[10px] space-y-0.5 bg-slate-50 p-1.5 rounded-lg border border-slate-100">
+                        <div className="text-[10px] space-y-1 bg-slate-50 p-1.5 rounded-lg border border-slate-100">
                           {(biz.assignedTelecaller || biz.assignedSalesperson) && (
                             <p className="text-slate-600 font-medium truncate">
                               👤 {biz.assignedTelecaller || biz.assignedSalesperson}
@@ -904,6 +1054,50 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
                             <p className="text-blue-700 font-medium truncate">
                               🎯 {biz.nextAction}
                             </p>
+                          )}
+                          {/* Lead Health and Velocity */}
+                          {biz.dealValue !== undefined && biz.dealValue !== null && biz.dealValue !== 0 && (
+                            <div className="text-[10px] text-emerald-700 font-extrabold flex items-center justify-between bg-emerald-50 px-2 py-1 rounded-lg border border-emerald-100">
+                              <span className="flex items-center">
+                                <span className="mr-0.5">₹</span>
+                                {biz.dealValue.toLocaleString('en-IN')}
+                              </span>
+                              {biz.expectedClosureDate && (
+                                <span className="text-slate-500 font-medium text-[8px]">
+                                  Exp: {biz.expectedClosureDate}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                          <div className="pt-1 border-t border-slate-200/60 flex items-center justify-between text-[9px] text-slate-500 font-semibold">
+                            <span className="flex items-center">
+                              {(() => {
+                                const h = calculateLeadHealth(biz, allActivities);
+                                return h === 'HEALTHY' ? (
+                                  <span className="text-emerald-600 flex items-center"><HeartPulse className="w-3 h-3 mr-0.5" /> Healthy</span>
+                                ) : h === 'NEEDS ATTENTION' ? (
+                                  <span className="text-amber-600 flex items-center"><HeartPulse className="w-3 h-3 mr-0.5" /> Attention</span>
+                                ) : (
+                                  <span className="text-rose-600 flex items-center"><ShieldAlert className="w-3 h-3 mr-0.5" /> At Risk</span>
+                                );
+                              })()}
+                            </span>
+                            <span>
+                              {(() => {
+                                const vel = calculateLeadVelocity(biz, allActivities);
+                                return `Age: ${vel.totalAgeDays}d • Stage: ${vel.daysInCurrentStage}d`;
+                              })()}
+                            </span>
+                          </div>
+                          {/* Tags list */}
+                          {biz.tags && biz.tags.length > 0 && (
+                            <div className="flex flex-wrap gap-1 pt-1">
+                              {biz.tags.map(tag => (
+                                <span key={tag} className="px-1 py-0.5 bg-slate-200 text-slate-700 rounded text-[8px] font-bold">
+                                  #{tag}
+                                </span>
+                              ))}
+                            </div>
                           )}
                         </div>
 
@@ -980,6 +1174,7 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
                   <th className="px-4 py-3.5">Company / City</th>
                   <th className="px-4 py-3.5">Contact Person</th>
                   <th className="px-4 py-3.5">Status & Temp</th>
+                  <th className="px-4 py-3.5">Health & Age</th>
                   <th className="px-4 py-3.5">Quick Actions</th>
                   <th className="px-4 py-3.5">Assigned To</th>
                   <th className="px-4 py-3.5">Next Follow-Up</th>
@@ -1012,6 +1207,24 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
                       <p className="text-[11px] text-slate-500 flex items-center mt-0.5">
                         {biz.city ? `${biz.city} • ` : ''}{biz.industry || 'General'}
                       </p>
+                      {biz.dealValue !== undefined && biz.dealValue !== null && biz.dealValue !== 0 && (
+                        <div className="mt-1 flex items-center text-[10px] text-emerald-700 font-extrabold bg-emerald-50 px-1.5 py-0.5 rounded w-fit border border-emerald-100">
+                          <span>₹{biz.dealValue.toLocaleString('en-IN')}</span>
+                          {biz.expectedClosureDate && (
+                            <span className="text-slate-400 font-normal ml-2">Exp: {biz.expectedClosureDate}</span>
+                          )}
+                        </div>
+                      )}
+                      {/* Tags list inside Company column */}
+                      {biz.tags && biz.tags.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-1.5">
+                          {biz.tags.map(tag => (
+                            <span key={tag} className="px-1 py-0.5 bg-slate-100 text-slate-600 border border-slate-200 rounded text-[9px] font-bold">
+                              #{tag}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </td>
                     <td className="px-5 py-3.5">
                       <p className="text-slate-800 font-medium">{biz.contactPerson || '-'}</p>
@@ -1020,7 +1233,7 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
                     <td className="px-5 py-3.5">
                       <div className="flex items-center space-x-1.5">
                         <select
-                          value={(biz.status || 'NEW').toUpperCase()}
+                           value={(biz.status || 'NEW').toUpperCase()}
                           onChange={(e) => biz.id && handleUpdateStage(biz.id, e.target.value as BusinessStatus)}
                           className="px-2 py-0.5 text-[10px] font-extrabold rounded-md border bg-white focus:outline-none"
                         >
@@ -1042,6 +1255,34 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
                           </span>
                         )}
                       </div>
+                    </td>
+                    <td className="px-5 py-3.5">
+                      {(() => {
+                        const h = calculateLeadHealth(biz, allActivities);
+                        const vel = calculateLeadVelocity(biz, allActivities);
+                        return (
+                          <div className="space-y-1">
+                            <div>
+                              {h === 'HEALTHY' ? (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                  🟢 HEALTHY
+                                </span>
+                              ) : h === 'NEEDS ATTENTION' ? (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-50 text-amber-700 border border-amber-200">
+                                  🟡 ATTENTION
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-50 text-rose-700 border border-rose-200">
+                                  🔴 AT RISK
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[10px] text-slate-500 font-semibold">
+                              Age: {vel.totalAgeDays}d • Stage: {vel.daysInCurrentStage}d
+                            </p>
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td className="px-5 py-3.5">
                       <CommunicationQuickActions
@@ -1278,6 +1519,49 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
             </div>
           </div>
 
+          <div className="p-3.5 bg-indigo-50/40 rounded-xl border border-indigo-100/60 space-y-3">
+            <h4 className="text-[10px] font-bold text-indigo-700 uppercase tracking-wider">Deal & Pipeline Accountability</h4>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Deal Value (INR)</label>
+                <div className="relative">
+                  <span className="absolute left-3 top-2 text-xs font-semibold text-slate-400">₹</span>
+                  <input
+                    type="number"
+                    min="0"
+                    placeholder="e.g. 50000"
+                    value={formData.dealValue}
+                    onChange={(e) => setFormData({ ...formData, dealValue: e.target.value === '' ? '' : Number(e.target.value) })}
+                    className="w-full pl-6 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:bg-white font-medium"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Expected Closure Date</label>
+                <input
+                  type="date"
+                  value={formData.expectedClosureDate}
+                  onChange={(e) => setFormData({ ...formData, expectedClosureDate: e.target.value })}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:bg-white"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">Tags (comma-separated)</label>
+            <input
+              type="text"
+              value={(formData.tags || []).join(', ')}
+              onChange={(e) => {
+                const tagsArr = e.target.value.split(',').map(t => t.trim()).filter(t => t.length > 0);
+                setFormData({ ...formData, tags: tagsArr });
+              }}
+              placeholder="qualified, priority-1, trial-user"
+              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:bg-white"
+            />
+          </div>
+
           <div className="flex justify-end space-x-3 pt-4 border-t border-slate-100">
             <button
               type="button"
@@ -1453,6 +1737,49 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
             </div>
           </div>
 
+          <div className="p-3.5 bg-indigo-50/40 rounded-xl border border-indigo-100/60 space-y-3">
+            <h4 className="text-[10px] font-bold text-indigo-700 uppercase tracking-wider">Deal & Pipeline Accountability</h4>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Deal Value (INR)</label>
+                <div className="relative">
+                  <span className="absolute left-3 top-2 text-xs font-semibold text-slate-400">₹</span>
+                  <input
+                    type="number"
+                    min="0"
+                    placeholder="e.g. 50000"
+                    value={formData.dealValue}
+                    onChange={(e) => setFormData({ ...formData, dealValue: e.target.value === '' ? '' : Number(e.target.value) })}
+                    className="w-full pl-6 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:bg-white font-medium"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Expected Closure Date</label>
+                <input
+                  type="date"
+                  value={formData.expectedClosureDate}
+                  onChange={(e) => setFormData({ ...formData, expectedClosureDate: e.target.value })}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:bg-white"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">Tags (comma-separated)</label>
+            <input
+              type="text"
+              value={(formData.tags || []).join(', ')}
+              onChange={(e) => {
+                const tagsArr = e.target.value.split(',').map(t => t.trim()).filter(t => t.length > 0);
+                setFormData({ ...formData, tags: tagsArr });
+              }}
+              placeholder="qualified, priority-1, trial-user"
+              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:bg-white"
+            />
+          </div>
+
           <div className="flex justify-end space-x-3 pt-4 border-t border-slate-100">
             <button
               type="button"
@@ -1534,6 +1861,55 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
                   {selectedBusiness.createdAt ? new Date(selectedBusiness.createdAt).toLocaleDateString() : 'N/A'}
                 </span>
               </div>
+              </div>
+
+              {/* Lead Intelligence Section inside Detail Box */}
+              <div className="mt-4 pt-3 border-t border-slate-200 grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                  <span className="text-slate-400 block font-semibold">Lead Health Status</span>
+                  {(() => {
+                    const h = calculateLeadHealth(selectedBusiness, allActivities);
+                    return h === 'HEALTHY' ? (
+                      <span className="inline-flex items-center mt-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                        🟢 HEALTHY
+                      </span>
+                    ) : h === 'NEEDS ATTENTION' ? (
+                      <span className="inline-flex items-center mt-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                        🟡 NEEDS ATTENTION
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center mt-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-rose-100 text-rose-800 border border-rose-200">
+                        🔴 AT RISK
+                      </span>
+                    );
+                  })()}
+                </div>
+                <div>
+                  <span className="text-slate-400 block font-semibold">Lead Velocity / Age</span>
+                  {(() => {
+                    const vel = calculateLeadVelocity(selectedBusiness, allActivities);
+                    return (
+                      <span className="font-bold text-slate-800 block mt-1 space-y-0.5">
+                        <span className="block">⏱️ Total Age: <strong>{vel.totalAgeDays}</strong> days</span>
+                        <span className="block">🚪 In Stage: <strong>{vel.daysInCurrentStage}</strong> days</span>
+                      </span>
+                    );
+                  })()}
+                </div>
+                <div>
+                  <span className="text-slate-400 block font-semibold">Associated Tags</span>
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {selectedBusiness.tags && selectedBusiness.tags.length > 0 ? (
+                      selectedBusiness.tags.map(tag => (
+                        <span key={tag} className="px-2 py-0.5 bg-slate-200 text-slate-800 font-bold rounded text-[10px] border border-slate-300">
+                          #{tag}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-slate-400 italic">No tags assigned</span>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
 

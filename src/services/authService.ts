@@ -207,6 +207,23 @@ export const authService = {
     }
   },
 
+  // Update a team member's monthly sales target
+  async updateUserTarget(uid: string, monthlyTarget: number): Promise<void> {
+    try {
+      const userRef = doc(db, 'users', uid);
+      await updateDoc(userRef, { monthlyTarget });
+    } catch (error) {
+      console.warn('Firestore user target update failed, updating local cache:', error);
+    }
+
+    const locals = getLocalUsers();
+    const idx = locals.findIndex(u => u.uid === uid);
+    if (idx !== -1) {
+      locals[idx].monthlyTarget = monthlyTarget;
+      saveLocalUsers(locals);
+    }
+  },
+
   // Add a team member using REAL Firebase Authentication with a secondary Auth App instance
   // so the Manager's active session is NEVER logged out or disrupted.
   async addTeamMember(

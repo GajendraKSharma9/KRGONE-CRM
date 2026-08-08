@@ -12,6 +12,7 @@ interface SettingsProps {
 export const Settings: React.FC<SettingsProps> = ({ user }) => {
   const [organization, setOrganization] = useState<Organization | null>(null);
   const [orgNameInput, setOrgNameInput] = useState('');
+  const [monthlyTeamTargetInput, setMonthlyTeamTargetInput] = useState<number | ''>('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
@@ -38,6 +39,7 @@ export const Settings: React.FC<SettingsProps> = ({ user }) => {
         if (org) {
           setOrganization(org);
           setOrgNameInput(org.name);
+          setMonthlyTeamTargetInput(org.monthlyTeamTarget || '');
         }
       } catch (err) {
         console.error('Error loading organization:', err);
@@ -70,11 +72,13 @@ export const Settings: React.FC<SettingsProps> = ({ user }) => {
     try {
       setSaving(true);
       await orgService.updateOrganizationName(effectiveOrgId, orgNameInput.trim());
-      setSuccessMsg('Organization name updated successfully!');
+      const targetVal = monthlyTeamTargetInput === '' ? 0 : Number(monthlyTeamTargetInput);
+      await orgService.updateOrganizationTarget(effectiveOrgId, targetVal);
+      setSuccessMsg('Organization settings updated successfully!');
       setTimeout(() => setSuccessMsg(''), 3000);
     } catch (err: any) {
-      console.error('Error updating org name:', err);
-      alert('Failed to update organization name: ' + err.message);
+      console.error('Error updating org:', err);
+      alert('Failed to update organization settings: ' + err.message);
     } finally {
       setSaving(false);
     }
@@ -249,6 +253,7 @@ export const Settings: React.FC<SettingsProps> = ({ user }) => {
                   <th className="p-3">Name</th>
                   <th className="p-3">Email & Firebase Auth UID</th>
                   <th className="p-3">Role</th>
+                  <th className="p-3">Monthly Target</th>
                   <th className="p-3">Status</th>
                   <th className="p-3 text-right">Actions</th>
                 </tr>
@@ -280,6 +285,34 @@ export const Settings: React.FC<SettingsProps> = ({ user }) => {
                           <option value="Telecaller">Telecaller</option>
                           <option value="Salesperson">Salesperson</option>
                         </select>
+                      </td>
+                      <td className="p-3">
+                        {member.role === 'Salesperson' ? (
+                          <div className="flex items-center space-x-1">
+                            <span className="text-[10px] text-slate-400">₹</span>
+                            <input
+                              type="number"
+                              min="0"
+                              disabled={user.role !== 'Manager'}
+                              placeholder="0"
+                              value={member.monthlyTarget !== undefined && member.monthlyTarget !== null ? member.monthlyTarget : ''}
+                              onChange={async (e) => {
+                                const val = e.target.value === '' ? 0 : Number(e.target.value);
+                                setTeamMembers(prev => prev.map(m => m.uid === member.uid ? { ...m, monthlyTarget: val } : m));
+                                try {
+                                  await authService.updateUserTarget(member.uid, val);
+                                  setSuccessMsg(`Monthly target updated for ${member.name}!`);
+                                  setTimeout(() => setSuccessMsg(''), 3000);
+                                } catch (err) {
+                                  console.error('Failed to update target:', err);
+                                }
+                              }}
+                              className="w-20 px-1.5 py-1 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-70"
+                            />
+                          </div>
+                        ) : (
+                          <span className="text-slate-400 font-normal">—</span>
+                        )}
                       </td>
                       <td className="p-3">
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
@@ -334,30 +367,52 @@ export const Settings: React.FC<SettingsProps> = ({ user }) => {
         {loading ? (
           <div className="py-4 text-xs text-slate-400">Loading organization details...</div>
         ) : (
-          <form onSubmit={handleUpdateOrgName} className="space-y-3">
-            <div>
-              <label className="block text-xs font-semibold text-slate-500 mb-1">Organization Name</label>
-              <div className="flex items-center space-x-2">
-                <div className="relative flex-1">
+          <form onSubmit={handleUpdateOrgName} className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1">Organization Name</label>
+                <div className="relative">
                   <Building className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
                   <input
                     type="text"
                     required
+                    disabled={user.role !== 'Manager'}
                     value={orgNameInput}
                     onChange={(e) => setOrgNameInput(e.target.value)}
-                    className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
+                    className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white disabled:opacity-75"
                   />
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1">Monthly Team Target (INR)</label>
+                <div className="relative">
+                  <span className="absolute left-3 top-2 text-xs font-semibold text-slate-400">₹</span>
+                  <input
+                    type="number"
+                    min="0"
+                    disabled={user.role !== 'Manager'}
+                    placeholder="Enter monthly team target"
+                    value={monthlyTeamTargetInput}
+                    onChange={(e) => setMonthlyTeamTargetInput(e.target.value === '' ? '' : Number(e.target.value))}
+                    className="w-full pl-7 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white disabled:opacity-75"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {user.role === 'Manager' && (
+              <div className="flex justify-end pt-2">
                 <button
                   type="submit"
                   disabled={saving}
                   className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs rounded-xl shadow-xs flex items-center space-x-1"
                 >
                   <Save className="w-3.5 h-3.5" />
-                  <span>{saving ? 'Saving...' : 'Save'}</span>
+                  <span>{saving ? 'Saving...' : 'Save Settings'}</span>
                 </button>
               </div>
-            </div>
+            )}
 
             <div className="pt-2">
               <p className="text-[11px] text-slate-400 font-mono">
