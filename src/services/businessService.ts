@@ -85,6 +85,34 @@ export const businessService = {
     const localStore = getLocalStore();
     const filteredLocal = localStore.filter(b => b.organizationId === organizationId || !b.organizationId);
     
+    // Auto-sync: If there are local records not in Firestore, attempt to upload them to Firestore now
+    const firestoreIds = new Set(firestoreList.map(b => b.id));
+    const unsyncedLocals = filteredLocal.filter(b => !b.id || b.id.startsWith('biz_') || !firestoreIds.has(b.id));
+
+    if (unsyncedLocals.length > 0) {
+      console.log(`Found ${unsyncedLocals.length} local records to sync to Firestore...`);
+      for (const localBiz of unsyncedLocals) {
+        try {
+          const payload = {
+            organizationId: localBiz.organizationId || organizationId || 'org_default',
+            companyName: (localBiz.companyName || '').trim(),
+            contactPerson: (localBiz.contactPerson || '').trim(),
+            mobile: (localBiz.mobile || '').trim(),
+            email: (localBiz.email || '').trim(),
+            industry: (localBiz.industry || 'General').trim(),
+            status: localBiz.status || 'New',
+            createdAt: localBiz.createdAt || new Date().toISOString(),
+            updatedAt: localBiz.updatedAt || new Date().toISOString()
+          };
+          const docRef = await addDoc(collection(db, COLLECTION_NAME), payload);
+          const syncedItem: Business = { id: docRef.id, ...payload };
+          firestoreList.push(syncedItem);
+        } catch (syncErr) {
+          console.warn('Failed to auto-sync local record to Firestore:', syncErr);
+        }
+      }
+    }
+
     const combined = mergeUniqueBusinesses([...firestoreList, ...filteredLocal]);
 
     // Keep local storage updated
