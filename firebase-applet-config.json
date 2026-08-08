@@ -1,12 +1,12 @@
 {
-  "projectId": "steel-osprey-qdw25",
-  "appId": "1:995071036259:web:7185dd0491fa1c503f2156",
-  "apiKey": "AIzaSyBAgqQUetLJSiUjpN61K1QhCJ1w_FiWeyA",
-  "authDomain": "steel-osprey-qdw25.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-krgonesalesnavig-3d318aa1-0bb6-4bcc-bfc0-ba43927de270",
-  "storageBucket": "steel-osprey-qdw25.firebasestorage.app",
-  "messagingSenderId": "995071036259",
-  "measurementId": "",
-  "oAuthClientId": "995071036259-f0ch8h7f014dntrkic2o3okg4pe53j37.apps.googleusercontent.com",
+  "projectId": "krgone-sales-navigator-9b686",
+  "appId": "1:170573257721:web:e0aef7e30722af747f7b28",
+  "apiKey": "AIzaSyCyWE1WUlkG8ZTGd2bEqL3TS9oX3uOH8uM",
+  "authDomain": "krgone-sales-navigator-9b686.firebaseapp.com",
+  "firestoreDatabaseId": "(default)",
+  "storageBucket": "krgone-sales-navigator-9b686.firebasestorage.app",
+  "messagingSenderId": "170573257721",
+  "measurementId": "G-WPZPCHLE0H",
+  "oAuthClientId": "",
   "recaptchaSiteKey": ""
 }
