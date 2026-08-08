@@ -84,44 +84,125 @@ export const businessService = {
     // Merge Firestore list with local storage cache
     const localStore = getLocalStore();
     const filteredLocal = localStore.filter(b => b.organizationId === organizationId || !b.organizationId);
-    
-    // Auto-sync: If there are local records not in Firestore, attempt to upload them to Firestore now
-    const firestoreIds = new Set(firestoreList.map(b => b.id));
-    const unsyncedLocals = filteredLocal.filter(b => !b.id || b.id.startsWith('biz_') || !firestoreIds.has(b.id));
 
-    if (unsyncedLocals.length > 0) {
-      console.log(`Found ${unsyncedLocals.length} local records to sync to Firestore...`);
-      for (const localBiz of unsyncedLocals) {
-        try {
-          const payload = {
-            organizationId: localBiz.organizationId || organizationId || 'org_default',
-            companyName: (localBiz.companyName || '').trim(),
-            contactPerson: (localBiz.contactPerson || '').trim(),
-            mobile: (localBiz.mobile || '').trim(),
-            email: (localBiz.email || '').trim(),
-            industry: (localBiz.industry || 'General').trim(),
-            status: localBiz.status || 'New',
-            createdAt: localBiz.createdAt || new Date().toISOString(),
-            updatedAt: localBiz.updatedAt || new Date().toISOString()
-          };
-          const docRef = await addDoc(collection(db, COLLECTION_NAME), payload);
-          const syncedItem: Business = { id: docRef.id, ...payload };
-          firestoreList.push(syncedItem);
-        } catch (syncErr) {
-          console.warn('Failed to auto-sync local record to Firestore:', syncErr);
-        }
-      }
-    }
-
+    // Merge Firestore list and local storage items so data is NEVER lost
     const combined = mergeUniqueBusinesses([...firestoreList, ...filteredLocal]);
 
-    // Keep local storage updated
+    // Keep local storage updated with all known items
     saveLocalStore(combined);
 
     // Sort descending by createdAt
     return combined.sort((a, b) => 
       new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
     );
+  },
+
+  // Get number of local items that are not yet verified in Firestore
+  async getUnsyncedCount(organizationId: string): Promise<number> {
+    const localStore = getLocalStore().filter(b => b.organizationId === organizationId || !b.organizationId);
+    if (localStore.length === 0) return 0;
+
+    let firestoreIds = new Set<string>();
+    try {
+      const snapshot = await getDocs(collection(db, COLLECTION_NAME));
+      snapshot.forEach(docSnap => firestoreIds.add(docSnap.id));
+    } catch {
+      return localStore.length;
+    }
+
+    const unsynced = localStore.filter(b => !b.id || b.id.startsWith('biz_') || !firestoreIds.has(b.id));
+    return unsynced.length;
+  },
+
+  // Method to explicitly trigger syncing local records to Firestore using writeBatch
+  async syncUnsyncedToFirestore(organizationId: string): Promise<{ syncedCount: number; failedCount: number; totalCount: number }> {
+    const localStore = getLocalStore();
+    
+    // Step 1: Query Firestore to get existing document IDs & items
+    let firestoreIds = new Set<string>();
+    let totalFirestore = 0;
+    try {
+      const snapshot = await getDocs(collection(db, COLLECTION_NAME));
+      totalFirestore = snapshot.size;
+      snapshot.forEach(docSnap => firestoreIds.add(docSnap.id));
+    } catch (e) {
+      console.warn('Failed to query Firestore for existing IDs:', e);
+    }
+
+    if (localStore.length === 0) {
+      return { syncedCount: 0, failedCount: 0, totalCount: totalFirestore };
+    }
+
+    // Step 2: Filter local items that are NOT present in Firestore
+    const unsyncedLocals = localStore.filter(b => !b.id || b.id.startsWith('biz_') || !firestoreIds.has(b.id));
+
+    if (unsyncedLocals.length === 0) {
+      return { syncedCount: 0, failedCount: 0, totalCount: totalFirestore || localStore.length };
+    }
+
+    // Step 3: Batch upload unsynced items to Firestore in chunks of 100
+    const chunkSize = 100;
+    let syncedCount = 0;
+    let failedCount = 0;
+    const updatedLocal = [...localStore];
+
+    for (let i = 0; i < unsyncedLocals.length; i += chunkSize) {
+      const chunk = unsyncedLocals.slice(i, i + chunkSize);
+      const batch = writeBatch(db);
+      const chunkMappings: { oldId: string; ref: any; payload: any }[] = [];
+
+      chunk.forEach(item => {
+        const docRef = doc(collection(db, COLLECTION_NAME));
+        const payload = {
+          organizationId: item.organizationId || organizationId || 'org_default',
+          companyName: (item.companyName || '').trim(),
+          contactPerson: (item.contactPerson || '').trim(),
+          mobile: (item.mobile || '').trim(),
+          email: (item.email || '').trim(),
+          industry: (item.industry || 'General').trim(),
+          status: item.status || 'New',
+          createdAt: item.createdAt || new Date().toISOString(),
+          updatedAt: item.updatedAt || new Date().toISOString()
+        };
+        batch.set(docRef, payload);
+        chunkMappings.push({ oldId: item.id, ref: docRef, payload });
+      });
+
+      try {
+        await batch.commit();
+        chunkMappings.forEach(({ oldId, ref, payload }) => {
+          const syncedItem: Business = { id: ref.id, ...payload };
+          const idx = updatedLocal.findIndex(b => b.id === oldId);
+          if (idx !== -1) {
+            updatedLocal[idx] = syncedItem;
+          } else {
+            updatedLocal.push(syncedItem);
+          }
+          syncedCount++;
+        });
+      } catch (err) {
+        console.error('Batch commit failed during sync, falling back to single inserts:', err);
+        for (const { oldId, payload } of chunkMappings) {
+          try {
+            const docRef = await addDoc(collection(db, COLLECTION_NAME), payload);
+            const syncedItem: Business = { id: docRef.id, ...payload };
+            const idx = updatedLocal.findIndex(b => b.id === oldId);
+            if (idx !== -1) {
+              updatedLocal[idx] = syncedItem;
+            } else {
+              updatedLocal.push(syncedItem);
+            }
+            syncedCount++;
+          } catch (singleErr) {
+            console.error('Single insert failed:', singleErr);
+            failedCount++;
+          }
+        }
+      }
+    }
+
+    saveLocalStore(mergeUniqueBusinesses(updatedLocal));
+    return { syncedCount, failedCount, totalCount: totalFirestore + syncedCount };
   },
 
   // Get single business by ID

@@ -8,7 +8,9 @@ import {
   FileSpreadsheet,
   CheckCircle2,
   XCircle,
-  Clock
+  Clock,
+  CloudUpload,
+  RefreshCw
 } from 'lucide-react';
 import { UserProfile, Business, Activity } from '../types';
 import { businessService } from '../services/businessService';
@@ -21,44 +23,59 @@ interface DashboardProps {
 export const Dashboard: React.FC<DashboardProps> = ({ user }) => {
   const [businesses, setBusinesses] = useState<Business[]>([]);
   const [activities, setActivities] = useState<Activity[]>([]);
+  const [unsyncedCount, setUnsyncedCount] = useState<number>(0);
+  const [syncing, setSyncing] = useState<boolean>(false);
+  const [syncMessage, setSyncMessage] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    let isMounted = true;
+  const loadDashboardData = async () => {
+    if (!user.organizationId) return;
+    try {
+      setLoading(true);
+      setError('');
+      const [bizData, actData, unCount] = await Promise.all([
+        businessService.getBusinesses(user.organizationId),
+        activityService.getActivities(user.organizationId),
+        businessService.getUnsyncedCount(user.organizationId)
+      ]);
 
-    async function loadDashboardData() {
-      if (!user.organizationId) return;
-      try {
-        setLoading(true);
-        setError('');
-        const [bizData, actData] = await Promise.all([
-          businessService.getBusinesses(user.organizationId),
-          activityService.getActivities(user.organizationId)
-        ]);
-
-        if (isMounted) {
-          setBusinesses(bizData);
-          setActivities(actData);
-        }
-      } catch (err: any) {
-        console.error('Error loading dashboard data:', err);
-        if (isMounted) {
-          setError(err.message || 'Failed to connect to database.');
-        }
-      } finally {
-        if (isMounted) {
-          setLoading(false);
-        }
-      }
+      setBusinesses(bizData);
+      setActivities(actData);
+      setUnsyncedCount(unCount);
+    } catch (err: any) {
+      console.error('Error loading dashboard data:', err);
+      setError(err.message || 'Failed to connect to database.');
+    } finally {
+      setLoading(false);
     }
+  };
 
+  useEffect(() => {
     loadDashboardData();
-
-    return () => {
-      isMounted = false;
-    };
   }, [user.organizationId]);
+
+  const handleSyncToCloud = async () => {
+    if (!user.organizationId) return;
+    try {
+      setSyncing(true);
+      setSyncMessage('');
+      const result = await businessService.syncUnsyncedToFirestore(user.organizationId);
+      if (result.syncedCount > 0) {
+        setSyncMessage(`Successfully saved ${result.syncedCount} record(s) to Cloud Firestore!`);
+        setTimeout(() => setSyncMessage(''), 5000);
+      } else {
+        setSyncMessage('All business records are now synced to Cloud Firestore.');
+        setTimeout(() => setSyncMessage(''), 3000);
+      }
+      await loadDashboardData();
+    } catch (err: any) {
+      console.error('Sync failed:', err);
+      setSyncMessage(`Sync failed: ${err.message || 'Unknown error'}`);
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const totalBusinesses = businesses.length;
   const newBusinesses = businesses.filter(b => b.status === 'New').length;
@@ -97,6 +114,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ user }) => {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
+          <button
+            onClick={handleSyncToCloud}
+            disabled={syncing}
+            className="inline-flex items-center space-x-2 px-4 py-2 bg-amber-400 hover:bg-amber-500 active:bg-amber-600 text-slate-950 text-xs font-extrabold rounded-lg transition-colors shadow-sm disabled:opacity-50 cursor-pointer border border-amber-500"
+            title="Sync all records with Cloud Firestore database"
+          >
+            <CloudUpload className={`w-4 h-4 text-slate-950 ${syncing ? 'animate-bounce' : ''}`} />
+            <span>{syncing ? 'Syncing...' : unsyncedCount > 0 ? `⚡ Sync ${unsyncedCount} Records` : '⚡ Cloud Sync'}</span>
+          </button>
           <Link
             to="/businesses"
             className="inline-flex items-center space-x-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg transition-colors shadow-sm"
@@ -120,6 +146,45 @@ export const Dashboard: React.FC<DashboardProps> = ({ user }) => {
           </Link>
         </div>
       </div>
+
+      {/* Always-Visible Cloud Sync Banner */}
+      <div className="p-4 bg-gradient-to-r from-slate-900 via-slate-850 to-slate-900 text-white rounded-2xl shadow-md border border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex items-start sm:items-center space-x-3">
+          <div className="p-2.5 bg-amber-500/20 text-amber-400 rounded-xl flex-shrink-0 border border-amber-500/30">
+            <CloudUpload className="w-5 h-5" />
+          </div>
+          <div>
+            <div className="flex items-center space-x-2">
+              <h4 className="text-xs font-bold text-amber-400 uppercase tracking-wider">
+                Cloud Firestore Database (Target: default)
+              </h4>
+              <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-full text-[10px] font-bold">
+                Live Status
+              </span>
+            </div>
+            <p className="text-xs text-slate-300 mt-1">
+              {unsyncedCount > 0 
+                ? `⚠️ ${unsyncedCount} record(s) pending sync to Cloud Firestore. Click Sync Now to upload.`
+                : `✓ ${totalBusinesses} business records actively synced with Cloud Firestore database.`}
+            </p>
+          </div>
+        </div>
+        <button
+          onClick={handleSyncToCloud}
+          disabled={syncing}
+          className="px-4 py-2.5 bg-amber-400 hover:bg-amber-300 active:bg-amber-500 text-slate-950 font-extrabold text-xs rounded-xl shadow-xs transition-transform active:scale-98 disabled:opacity-50 flex-shrink-0 flex items-center justify-center space-x-2 cursor-pointer border border-amber-500"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 text-slate-950 ${syncing ? 'animate-spin' : ''}`} />
+          <span>{syncing ? 'Uploading to Firestore...' : unsyncedCount > 0 ? `Sync ${unsyncedCount} Records Now` : '⚡ Sync to Cloud Now'}</span>
+        </button>
+      </div>
+
+      {syncMessage && (
+        <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-medium rounded-2xl flex items-center space-x-2">
+          <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+          <span>{syncMessage}</span>
+        </div>
+      )}
 
       {/* KPI Cards Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">

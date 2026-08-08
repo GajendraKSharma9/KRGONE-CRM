@@ -10,7 +10,8 @@ import {
   Menu, 
   X,
   Compass,
-  UserCircle
+  UserCircle,
+  CloudUpload
 } from 'lucide-react';
 import { UserProfile } from '../types';
 import { authService } from '../services/authService';
@@ -142,8 +143,13 @@ export const Layout: React.FC<LayoutProps> = ({ user, children }) => {
       <div className="flex-1 flex flex-col min-w-0 min-h-screen">
         {/* Desktop Top Header */}
         <header className="hidden md:flex items-center justify-between bg-white border-b border-slate-200 px-8 py-4 shadow-2xs sticky top-0 z-20">
-          <div>
+          <div className="flex items-center space-x-4">
             <h2 className="text-xl font-bold text-slate-900 tracking-tight">{getPageTitle()}</h2>
+            <div className="flex items-center space-x-1.5 px-3 py-1 bg-amber-50 text-amber-800 border border-amber-200 rounded-full text-xs font-bold shadow-2xs">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              <CloudUpload className="w-3.5 h-3.5 text-amber-600" />
+              <span>Cloud Sync Active (Firestore)</span>
+            </div>
           </div>
           <div className="flex items-center space-x-4">
             <div className="text-right">

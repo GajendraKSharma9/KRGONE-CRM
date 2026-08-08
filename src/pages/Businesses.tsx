@@ -15,7 +15,9 @@ import {
   XCircle, 
   Clock,
   Activity as ActivityIcon,
-  Tag
+  Tag,
+  CloudUpload,
+  RefreshCw
 } from 'lucide-react';
 import { UserProfile, Business, BusinessStatus, Activity, ActivityType } from '../types';
 import { businessService } from '../services/businessService';
@@ -68,6 +70,30 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
   const [addingActivity, setAddingActivity] = useState(false);
 
   const [saving, setSaving] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [unsyncedCount, setUnsyncedCount] = useState<number>(0);
+
+  const handleSyncToCloud = async () => {
+    if (!user.organizationId) return;
+    try {
+      setSyncing(true);
+      setError('');
+      const res = await businessService.syncUnsyncedToFirestore(user.organizationId);
+      if (res.syncedCount > 0) {
+        setSuccessMessage(`Successfully synced ${res.syncedCount} business contact(s) to Cloud Firestore!`);
+        setTimeout(() => setSuccessMessage(''), 4000);
+        await loadBusinesses();
+      } else {
+        setSuccessMessage('All business contacts are already saved in Cloud Firestore.');
+        setTimeout(() => setSuccessMessage(''), 3000);
+      }
+    } catch (err: any) {
+      console.error('Error syncing to cloud:', err);
+      setError(err.message || 'Failed to sync contacts to Cloud Firestore.');
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   // Load Businesses
   const loadBusinesses = async () => {
@@ -75,8 +101,12 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
     try {
       setLoading(true);
       setError('');
-      const data = await businessService.getBusinesses(user.organizationId);
+      const [data, unCount] = await Promise.all([
+        businessService.getBusinesses(user.organizationId),
+        businessService.getUnsyncedCount(user.organizationId)
+      ]);
       setBusinesses(data);
+      setUnsyncedCount(unCount);
     } catch (err: any) {
       console.error('Error fetching businesses:', err);
       setError(err.message || 'Failed to load businesses.');
@@ -294,13 +324,86 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
           <h1 className="text-xl font-bold text-slate-900 tracking-tight">Businesses Directory</h1>
           <p className="text-xs text-slate-500 mt-0.5">Manage your client accounts, leads, and organizational records.</p>
         </div>
-        <button
-          onClick={handleOpenAdd}
-          className="inline-flex items-center justify-center space-x-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs rounded-xl shadow-sm transition-colors"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Add Business</span>
-        </button>
+        <div className="flex items-center space-x-3">
+          <button
+            onClick={handleSyncToCloud}
+            disabled={syncing}
+            className="inline-flex items-center justify-center space-x-2 px-4 py-2.5 bg-amber-400 hover:bg-amber-500 active:bg-amber-600 text-slate-950 font-extrabold text-xs rounded-xl shadow-sm transition-all cursor-pointer border border-amber-500 disabled:opacity-50"
+            title="Sync records to Cloud Firestore database (default)"
+          >
+            <CloudUpload className={`w-4 h-4 text-amber-950 ${syncing ? 'animate-bounce' : ''}`} />
+            <span>
+              {syncing 
+                ? 'Syncing to Cloud...' 
+                : unsyncedCount > 0 
+                  ? `⚡ Sync ${unsyncedCount} Unsynced Records` 
+                  : '⚡ Sync to Cloud Firestore'}
+            </span>
+          </button>
+          <button
+            onClick={() => loadBusinesses()}
+            className="inline-flex items-center justify-center p-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-xl shadow-xs transition-colors"
+            title="Refresh from Cloud Firestore"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          </button>
+          <button
+            onClick={handleOpenAdd}
+            className="inline-flex items-center justify-center space-x-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs rounded-xl shadow-sm transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Add Business</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Always-Visible Universal Cloud Sync Banner */}
+      <div className="p-4 bg-gradient-to-r from-slate-900 via-slate-850 to-slate-900 text-white rounded-2xl shadow-md border border-slate-700 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div className="flex items-center space-x-3">
+          <div className="p-2.5 bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-xl flex-shrink-0">
+            <CloudUpload className="w-5 h-5" />
+          </div>
+          <div>
+            <div className="flex items-center space-x-2">
+              <h3 className="text-xs font-extrabold uppercase tracking-wider text-amber-400">
+                Cloud Firestore Database Sync Engine
+              </h3>
+              <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-full text-[10px] font-bold">
+                Target: (default)
+              </span>
+            </div>
+            <p className="text-xs text-slate-300 mt-1">
+              {unsyncedCount > 0 ? (
+                <span className="text-amber-300 font-semibold">
+                  ⚠️ {unsyncedCount} contact(s) waiting in local cache. Click <strong>Sync Now</strong> to upload directly to Cloud Firestore.
+                </span>
+              ) : (
+                <span className="text-slate-300">
+                  ✓ All {businesses.length} contact records are verified and synced with your Cloud Firestore database.
+                </span>
+              )}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center space-x-2 self-end md:self-auto">
+          <button
+            onClick={() => loadBusinesses()}
+            disabled={loading}
+            className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs rounded-xl border border-slate-700 transition-colors flex items-center space-x-1.5"
+            title="Refresh from Cloud Firestore"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+            <span>Refresh</span>
+          </button>
+          <button
+            onClick={handleSyncToCloud}
+            disabled={syncing}
+            className="px-4 py-2 bg-amber-400 hover:bg-amber-300 active:bg-amber-500 text-slate-950 font-extrabold text-xs rounded-xl shadow-md transition-all flex items-center space-x-2 border border-amber-500 disabled:opacity-50 cursor-pointer"
+          >
+            <CloudUpload className={`w-4 h-4 ${syncing ? 'animate-bounce' : ''}`} />
+            <span>{syncing ? 'Syncing...' : '⚡ Sync to Cloud Now'}</span>
+          </button>
+        </div>
       </div>
 
       {/* Success Banner */}
