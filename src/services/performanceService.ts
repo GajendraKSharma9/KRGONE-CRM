@@ -79,11 +79,28 @@ export const performanceService = {
       }
     }
 
-    // Merge with local storage
+    // Merge with local storage and sync local-only items to Firestore
     const localList = getLocalItems<KPI>(LOCAL_KPIS_KEY).filter(k => k.organizationId === organizationId);
     const map = new Map<string, KPI>();
     firestoreList.forEach(k => map.set(k.id, k));
-    localList.forEach(k => { if (!map.has(k.id)) map.set(k.id, k); });
+
+    for (const localKpi of localList) {
+      if (!map.has(localKpi.id)) {
+        try {
+          await setDoc(doc(db, KPIS_COL, localKpi.id), {
+            organizationId: localKpi.organizationId,
+            name: localKpi.name,
+            unit: localKpi.unit,
+            kpiType: localKpi.kpiType,
+            active: localKpi.active,
+            createdAt: localKpi.createdAt || new Date().toISOString()
+          });
+        } catch (e) {
+          console.warn(`Failed to sync local KPI ${localKpi.id} to Firestore:`, e);
+        }
+        map.set(localKpi.id, localKpi);
+      }
+    }
     let combined = Array.from(map.values());
 
     // Auto-seed defaults if list is completely empty
@@ -209,7 +226,27 @@ export const performanceService = {
     const localList = getLocalItems<SalesTarget>(LOCAL_TARGETS_KEY).filter(t => t.organizationId === organizationId && (!period || t.period === period));
     const map = new Map<string, SalesTarget>();
     firestoreList.forEach(t => map.set(t.id, t));
-    localList.forEach(t => { if (!map.has(t.id)) map.set(t.id, t); });
+
+    for (const localTarget of localList) {
+      if (!map.has(localTarget.id)) {
+        try {
+          await setDoc(doc(db, TARGETS_COL, localTarget.id), {
+            organizationId: localTarget.organizationId,
+            salespersonUid: localTarget.salespersonUid,
+            salespersonName: localTarget.salespersonName,
+            kpiId: localTarget.kpiId,
+            kpiName: localTarget.kpiName,
+            period: localTarget.period,
+            targetValue: localTarget.targetValue,
+            managerComment: localTarget.managerComment || '',
+            createdAt: localTarget.createdAt || new Date().toISOString()
+          });
+        } catch (e) {
+          console.warn(`Failed to sync local target ${localTarget.id} to Firestore:`, e);
+        }
+        map.set(localTarget.id, localTarget);
+      }
+    }
     const combined = Array.from(map.values());
 
     saveLocalItems(LOCAL_TARGETS_KEY, combined);
@@ -334,7 +371,30 @@ export const performanceService = {
     const localList = getLocalItems<AchievementEntry>(LOCAL_ACHIEVEMENTS_KEY).filter(a => a.organizationId === organizationId);
     const map = new Map<string, AchievementEntry>();
     firestoreList.forEach(a => map.set(a.id, a));
-    localList.forEach(a => { if (!map.has(a.id)) map.set(a.id, a); });
+
+    for (const localAch of localList) {
+      if (!map.has(localAch.id)) {
+        try {
+          await setDoc(doc(db, ACHIEVEMENTS_COL, localAch.id), {
+            organizationId: localAch.organizationId,
+            salespersonUid: localAch.salespersonUid,
+            salespersonName: localAch.salespersonName,
+            kpiId: localAch.kpiId,
+            kpiName: localAch.kpiName,
+            value: localAch.value,
+            date: localAch.date,
+            customerClient: localAch.customerClient || '',
+            product: localAch.product || '',
+            supportingReference: localAch.supportingReference || '',
+            notes: localAch.notes || '',
+            createdAt: localAch.createdAt || new Date().toISOString()
+          });
+        } catch (e) {
+          console.warn(`Failed to sync local achievement ${localAch.id} to Firestore:`, e);
+        }
+        map.set(localAch.id, localAch);
+      }
+    }
     const combined = Array.from(map.values());
 
     saveLocalItems(LOCAL_ACHIEVEMENTS_KEY, combined);
@@ -430,7 +490,37 @@ export const performanceService = {
     const localList = getLocalItems<TeamReview>(LOCAL_REVIEWS_KEY).filter(r => r.organizationId === organizationId);
     const map = new Map<string, TeamReview>();
     firestoreList.forEach(r => map.set(r.id!, r));
-    localList.forEach(r => { if (r.id && !map.has(r.id)) map.set(r.id, r); });
+
+    for (const localReview of localList) {
+      if (localReview.id && !map.has(localReview.id)) {
+        try {
+          await setDoc(doc(db, REVIEWS_COL, localReview.id), {
+            organizationId: localReview.organizationId,
+            salespersonUid: localReview.salespersonUid,
+            salespersonName: localReview.salespersonName,
+            kpiId: localReview.kpiId,
+            kpiName: localReview.kpiName,
+            target: localReview.target,
+            achievement: localReview.achievement,
+            gap: localReview.gap,
+            completionPercentage: localReview.completionPercentage,
+            status: localReview.status,
+            reason: localReview.reason || '',
+            managerComment: localReview.managerComment || '',
+            actionPlan: localReview.actionPlan || '',
+            reviewDate: localReview.reviewDate,
+            nextReviewDate: localReview.nextReviewDate,
+            reviewStatus: localReview.reviewStatus,
+            createdBy: localReview.createdBy,
+            createdAt: localReview.createdAt || new Date().toISOString(),
+            updatedAt: localReview.updatedAt || new Date().toISOString()
+          });
+        } catch (e) {
+          console.warn(`Failed to sync local review ${localReview.id} to Firestore:`, e);
+        }
+        map.set(localReview.id, localReview);
+      }
+    }
     const combined = Array.from(map.values());
 
     saveLocalItems(LOCAL_REVIEWS_KEY, combined);
