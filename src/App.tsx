@@ -10,6 +10,8 @@ import { Businesses } from './pages/Businesses';
 import { Activities } from './pages/Activities';
 import { BulkImport } from './pages/BulkImport';
 import { Settings } from './pages/Settings';
+import { SalesPerformance } from './pages/SalesPerformance';
+
 
 export default function App() {
   const [user, setUser] = useState<UserProfile | null>(null);
@@ -87,6 +89,78 @@ export default function App() {
             <ProtectedRoute user={user} loading={loading}>
               <Layout user={user}>
                 <BulkImport user={user!} />
+              </Layout>
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Protected Sales Performance Routes */}
+        <Route
+          path="/sales-performance"
+          element={
+            <ProtectedRoute user={user} loading={loading}>
+              <Layout user={user}>
+                <SalesPerformance user={user!} tab="dashboard" />
+              </Layout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/sales-performance/dashboard"
+          element={
+            <ProtectedRoute user={user} loading={loading}>
+              <Layout user={user}>
+                <SalesPerformance user={user!} tab="dashboard" />
+              </Layout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/sales-performance/target-setting"
+          element={
+            <ProtectedRoute user={user} loading={loading}>
+              <Layout user={user}>
+                <SalesPerformance user={user!} tab="target-setting" />
+              </Layout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/sales-performance/achievement-entry"
+          element={
+            <ProtectedRoute user={user} loading={loading}>
+              <Layout user={user}>
+                <SalesPerformance user={user!} tab="achievement-entry" />
+              </Layout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/sales-performance/team-review"
+          element={
+            <ProtectedRoute user={user} loading={loading}>
+              <Layout user={user}>
+                <SalesPerformance user={user!} tab="team-review" />
+              </Layout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/sales-performance/reports"
+          element={
+            <ProtectedRoute user={user} loading={loading}>
+              <Layout user={user}>
+                <SalesPerformance user={user!} tab="reports" />
+              </Layout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/sales-performance/settings"
+          element={
+            <ProtectedRoute user={user} loading={loading}>
+              <Layout user={user}>
+                <SalesPerformance user={user!} tab="settings" />
               </Layout>
             </ProtectedRoute>
           }

@@ -52,6 +52,54 @@
         "createdAt": { "type": "string" }
       },
       "required": ["organizationId", "type", "notes"]
+    },
+    "kpis": {
+      "title": "kpis",
+      "type": "object",
+      "properties": {
+        "organizationId": { "type": "string" },
+        "name": { "type": "string" },
+        "unit": { "type": "string", "enum": ["Currency", "Number", "Percentage", "Units", "Custom"] },
+        "kpiType": { "type": "string", "enum": ["system", "custom"] },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["organizationId", "name", "unit", "active"]
+    },
+    "sales_targets": {
+      "title": "sales_targets",
+      "type": "object",
+      "properties": {
+        "organizationId": { "type": "string" },
+        "salespersonUid": { "type": "string" },
+        "salespersonName": { "type": "string" },
+        "kpiId": { "type": "string" },
+        "kpiName": { "type": "string" },
+        "period": { "type": "string" },
+        "targetValue": { "type": "number" },
+        "managerComment": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["organizationId", "salespersonUid", "salespersonName", "kpiId", "kpiName", "period", "targetValue"]
+    },
+    "achievement_entries": {
+      "title": "achievement_entries",
+      "type": "object",
+      "properties": {
+        "organizationId": { "type": "string" },
+        "salespersonUid": { "type": "string" },
+        "salespersonName": { "type": "string" },
+        "kpiId": { "type": "string" },
+        "kpiName": { "type": "string" },
+        "value": { "type": "number" },
+        "date": { "type": "string" },
+        "customerClient": { "type": "string" },
+        "product": { "type": "string" },
+        "supportingReference": { "type": "string" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["organizationId", "salespersonUid", "salespersonName", "kpiId", "kpiName", "value", "date"]
     }
   },
   "firestore": {
@@ -70,6 +118,18 @@
     "/activities/{activityId}": {
       "schema": "activities",
       "description": "Activity log collection"
+    },
+    "/kpis/{kpiId}": {
+      "schema": "kpis",
+      "description": "KPI library definitions"
+    },
+    "/sales_targets/{targetId}": {
+      "schema": "sales_targets",
+      "description": "Sales salesperson target allocations"
+    },
+    "/achievement_entries/{achievementId}": {
+      "schema": "achievement_entries",
+      "description": "Manual sales accomplishment logs"
     }
   }
 }

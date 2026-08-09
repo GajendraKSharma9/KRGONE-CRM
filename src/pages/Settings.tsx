@@ -102,10 +102,28 @@ export const Settings: React.FC<SettingsProps> = ({ user }) => {
     try {
       await authService.updateUserRoleAndStatus(targetUid, newRole, currentActive);
       setTeamMembers(prev => prev.map(m => m.uid === targetUid ? { ...m, role: newRole } : m));
-      setSuccessMsg('Team member role updated!');
+      setSuccessMsg('Team member role updated successfully!');
       setTimeout(() => setSuccessMsg(''), 3000);
     } catch (err: any) {
       console.error('Failed to update role:', err);
+    }
+  };
+
+  const handleOwnRoleChange = async (newRole: 'Manager' | 'Telecaller' | 'Salesperson') => {
+    try {
+      setSaving(true);
+      await authService.updateUserRoleAndStatus(user.uid, newRole, true);
+      setSuccessMsg('Your profile role updated successfully! Refreshing details...');
+      setTimeout(() => {
+        setSuccessMsg('');
+        window.location.reload();
+      }, 1500);
+    } catch (err: any) {
+      console.error('Failed to update own role:', err);
+      setSuccessMsg('Failed to update role: ' + (err.message || 'Unknown error'));
+      setTimeout(() => setSuccessMsg(''), 4000);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -180,8 +198,8 @@ export const Settings: React.FC<SettingsProps> = ({ user }) => {
       </div>
 
       {successMsg && (
-        <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-medium rounded-xl flex items-center space-x-2 animate-in fade-in">
-          <Check className="w-4 h-4" />
+        <div className="fixed bottom-6 right-6 z-50 p-4 bg-slate-900 border border-slate-800 text-white text-xs font-semibold rounded-2xl flex items-center space-x-2.5 shadow-2xl animate-in slide-in-from-bottom-5 fade-in duration-300">
+          <Check className="w-4 h-4 text-emerald-400" />
           <span>{successMsg}</span>
         </div>
       )}
@@ -212,9 +230,22 @@ export const Settings: React.FC<SettingsProps> = ({ user }) => {
 
           <div>
             <label className="block text-xs font-semibold text-slate-500 mb-1">Assigned Role</label>
-            <div className="flex items-center space-x-3 p-3 bg-blue-50/50 border border-blue-200 rounded-xl">
-              <Shield className="w-4 h-4 text-blue-600" />
-              <span className="text-xs font-bold text-blue-800">{user.role || 'Manager'}</span>
+            <div className="relative">
+              <Shield className="w-4 h-4 text-blue-600 absolute left-3 top-3.5 pointer-events-none" />
+              <select
+                value={user.role || 'Manager'}
+                onChange={(e) => handleOwnRoleChange(e.target.value as any)}
+                className="w-full pl-9 pr-8 py-2.5 bg-blue-50/50 border border-blue-200 rounded-xl text-xs font-bold text-blue-800 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer appearance-none transition-colors hover:bg-blue-50/80"
+              >
+                <option value="Manager">Manager</option>
+                <option value="Telecaller">Telecaller</option>
+                <option value="Salesperson">Salesperson</option>
+              </select>
+              <div className="absolute right-3.5 top-3.5 pointer-events-none text-blue-600">
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M19 9l-7 7-7-7" />
+                </svg>
+              </div>
             </div>
           </div>
         </div>
@@ -230,14 +261,22 @@ export const Settings: React.FC<SettingsProps> = ({ user }) => {
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">Manage team members, roles, and status within your workspace.</p>
           </div>
-          <button
-            onClick={() => setIsAddMemberModalOpen(true)}
-            className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl shadow-xs flex items-center space-x-1.5 transition-colors"
-          >
-            <UserPlus className="w-4 h-4" />
-            <span>Add Team Member</span>
-          </button>
+          {user.role === 'Manager' && (
+            <button
+              onClick={() => setIsAddMemberModalOpen(true)}
+              className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl shadow-xs flex items-center space-x-1.5 transition-colors"
+            >
+              <UserPlus className="w-4 h-4" />
+              <span>Add Team Member</span>
+            </button>
+          )}
         </div>
+
+        {user.role !== 'Manager' && (
+          <div className="p-3.5 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-xl font-medium leading-relaxed">
+            ⚠️ <strong>Read-Only Mode:</strong> As a <strong>{user.role}</strong>, you can view team members but cannot add members, update roles, or assign targets. To test or use Manager features, switch your role to <strong>Manager</strong> above.
+          </div>
+        )}
 
         {loadingTeam ? (
           <div className="py-6 text-center text-xs text-slate-400">Loading team members...</div>
@@ -278,8 +317,9 @@ export const Settings: React.FC<SettingsProps> = ({ user }) => {
                       <td className="p-3">
                         <select
                           value={member.role || 'Telecaller'}
+                          disabled={user.role !== 'Manager'}
                           onChange={(e) => handleRoleChange(member.uid, e.target.value as any, isActive)}
-                          className="px-2 py-1 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                          className="px-2 py-1 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-75 disabled:bg-slate-50"
                         >
                           <option value="Manager">Manager</option>
                           <option value="Telecaller">Telecaller</option>
@@ -326,9 +366,9 @@ export const Settings: React.FC<SettingsProps> = ({ user }) => {
                           <button
                             type="button"
                             onClick={() => handleSendResetEmail(member.email)}
-                            disabled={resettingEmail === member.email}
+                            disabled={resettingEmail === member.email || user.role !== 'Manager'}
                             title="Send Password Reset & Setup Link to Employee Email"
-                            className="px-2.5 py-1 bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 rounded-lg text-[11px] font-semibold transition-colors flex items-center space-x-1"
+                            className="px-2.5 py-1 bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 rounded-lg text-[11px] font-semibold transition-colors flex items-center space-x-1 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             <Send className="w-3 h-3 text-blue-600" />
                             <span>{resettingEmail === member.email ? 'Sending...' : 'Password Setup Link'}</span>
@@ -336,8 +376,9 @@ export const Settings: React.FC<SettingsProps> = ({ user }) => {
 
                           <button
                             type="button"
+                            disabled={user.role !== 'Manager'}
                             onClick={() => handleStatusToggle(member.uid, member.role || 'Telecaller', isActive)}
-                            className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors flex items-center space-x-1 ${
+                            className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors flex items-center space-x-1 disabled:opacity-50 disabled:cursor-not-allowed ${
                               isActive
                                 ? 'bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200'
                                 : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200'
