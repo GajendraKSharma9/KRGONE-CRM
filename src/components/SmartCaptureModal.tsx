@@ -276,7 +276,7 @@ export const SmartCaptureModal: React.FC<SmartCaptureModalProps> = ({
                 </span>
               </h3>
               <p className="text-xs text-slate-400">
-                Snap business cards, document photos, or PDFs to auto-extract records into Firestore.
+                Snap business cards, document photos, or PDFs to auto-extract records into Cloud Database.
               </p>
             </div>
           </div>

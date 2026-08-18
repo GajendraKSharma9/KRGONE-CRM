@@ -100,6 +100,67 @@
         "createdAt": { "type": "string" }
       },
       "required": ["organizationId", "salespersonUid", "salespersonName", "kpiId", "kpiName", "value", "date"]
+    },
+    "marketing_channels": {
+      "title": "marketing_channels",
+      "type": "object",
+      "properties": {
+        "organizationId": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "purpose": { "type": "string" },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["organizationId", "name", "category", "active"]
+    },
+    "marketing_sops": {
+      "title": "marketing_sops",
+      "type": "object",
+      "properties": {
+        "organizationId": { "type": "string" },
+        "channelId": { "type": "string" },
+        "activity": { "type": "string" },
+        "frequency": { "type": "string" },
+        "target": { "type": "number" },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["organizationId", "channelId", "activity", "frequency", "target", "active"]
+    },
+    "marketing_activities": {
+      "title": "marketing_activities",
+      "type": "object",
+      "properties": {
+        "organizationId": { "type": "string" },
+        "channelId": { "type": "string" },
+        "sopId": { "type": "string" },
+        "date": { "type": "string" },
+        "activity": { "type": "string" },
+        "target": { "type": "number" },
+        "actual": { "type": "number" },
+        "result": { "type": "string" },
+        "note": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["organizationId", "channelId", "sopId", "date", "activity", "target", "actual", "createdBy"]
+    },
+    "marketing_insights": {
+      "title": "marketing_insights",
+      "type": "object",
+      "properties": {
+        "organizationId": { "type": "string" },
+        "channelId": { "type": "string" },
+        "period": { "type": "string" },
+        "decision": { "type": "string" },
+        "reason": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["organizationId", "channelId", "period", "decision", "reason", "createdBy"]
     }
   },
   "firestore": {
@@ -130,6 +191,22 @@
     "/achievement_entries/{achievementId}": {
       "schema": "achievement_entries",
       "description": "Manual sales accomplishment logs"
+    },
+    "/marketing_channels/{channelId}": {
+      "schema": "marketing_channels",
+      "description": "Marketing Channels collection"
+    },
+    "/marketing_sops/{sopId}": {
+      "schema": "marketing_sops",
+      "description": "Marketing SOPs checklist"
+    },
+    "/marketing_activities/{activityId}": {
+      "schema": "marketing_activities",
+      "description": "Logged execution activities"
+    },
+    "/marketing_insights/{insightId}": {
+      "schema": "marketing_insights",
+      "description": "Marketing optimization insights"
     }
   }
 }

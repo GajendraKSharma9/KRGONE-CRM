@@ -100,6 +100,57 @@ service cloud.firestore {
       allow delete: if isAuthenticated() && (resource.data.organizationId == getUserOrgId() || resource.data.organizationId == 'org_' + request.auth.uid);
     }
 
+    // Helper to check for Manager role
+    function isManager() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (getUserData().role == 'Manager' || getUserData().role == 'manager');
+    }
+
+    // Marketing Channels Collection: Strict organization and role isolation
+    match /marketing_channels/{channelId} {
+      allow read: if isAuthenticated() && (resource.data.organizationId == getUserOrgId() || resource.data.organizationId == 'org_' + request.auth.uid);
+      allow create: if isAuthenticated() && (request.resource.data.organizationId == getUserOrgId() || request.resource.data.organizationId == 'org_' + request.auth.uid) && isManager();
+      allow update: if isAuthenticated() 
+        && (resource.data.organizationId == getUserOrgId() || resource.data.organizationId == 'org_' + request.auth.uid)
+        && (request.resource.data.organizationId == getUserOrgId() || request.resource.data.organizationId == 'org_' + request.auth.uid)
+        && isManager();
+      allow delete: if isAuthenticated() 
+        && (resource.data.organizationId == getUserOrgId() || resource.data.organizationId == 'org_' + request.auth.uid)
+        && isManager();
+    }
+
+    // Marketing SOPs Collection: Strict organization and role isolation
+    match /marketing_sops/{sopId} {
+      allow read: if isAuthenticated() && (resource.data.organizationId == getUserOrgId() || resource.data.organizationId == 'org_' + request.auth.uid);
+      allow create: if isAuthenticated() && (request.resource.data.organizationId == getUserOrgId() || request.resource.data.organizationId == 'org_' + request.auth.uid) && isManager();
+      allow update: if isAuthenticated() 
+        && (resource.data.organizationId == getUserOrgId() || resource.data.organizationId == 'org_' + request.auth.uid)
+        && (request.resource.data.organizationId == getUserOrgId() || request.resource.data.organizationId == 'org_' + request.auth.uid)
+        && isManager();
+      allow delete: if isAuthenticated() 
+        && (resource.data.organizationId == getUserOrgId() || resource.data.organizationId == 'org_' + request.auth.uid)
+        && isManager();
+    }
+
+    // Marketing Activities Collection: Any authenticated staff can log activities
+    match /marketing_activities/{activityId} {
+      allow read: if isAuthenticated() && (resource.data.organizationId == getUserOrgId() || resource.data.organizationId == 'org_' + request.auth.uid);
+      allow create: if isAuthenticated() && (request.resource.data.organizationId == getUserOrgId() || request.resource.data.organizationId == 'org_' + request.auth.uid);
+      allow update: if isAuthenticated() 
+        && (resource.data.organizationId == getUserOrgId() || resource.data.organizationId == 'org_' + request.auth.uid)
+        && (request.resource.data.organizationId == getUserOrgId() || request.resource.data.organizationId == 'org_' + request.auth.uid);
+      allow delete: if isAuthenticated() && (resource.data.organizationId == getUserOrgId() || resource.data.organizationId == 'org_' + request.auth.uid);
+    }
+
+    // Marketing Insights Collection: Strict organization isolation
+    match /marketing_insights/{insightId} {
+      allow read: if isAuthenticated() && (resource.data.organizationId == getUserOrgId() || resource.data.organizationId == 'org_' + request.auth.uid);
+      allow create: if isAuthenticated() && (request.resource.data.organizationId == getUserOrgId() || request.resource.data.organizationId == 'org_' + request.auth.uid);
+      allow update: if isAuthenticated() 
+        && (resource.data.organizationId == getUserOrgId() || resource.data.organizationId == 'org_' + request.auth.uid)
+        && (request.resource.data.organizationId == getUserOrgId() || request.resource.data.organizationId == 'org_' + request.auth.uid);
+      allow delete: if isAuthenticated() && (resource.data.organizationId == getUserOrgId() || resource.data.organizationId == 'org_' + request.auth.uid);
+    }
+
     // Deny access to all other document paths by default
     match /{document=**} {
       allow read, write: if false;

@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { 
   Building2, 
   Search, 
@@ -29,7 +30,7 @@ import { UserProfile, Business, BusinessStatus, Activity, ActivityType } from '.
 import { businessService } from '../services/businessService';
 import { activityService } from '../services/activityService';
 import { authService } from '../services/authService';
-import { calculateLeadHealth, exportBusinessesToCSV, calculateLeadVelocity } from '../services/intelligenceService';
+import { calculateLeadHealth, exportBusinessesToCSV, calculateLeadVelocity, LeadHealthStatus, getTeamPerformanceMetrics } from '../services/intelligenceService';
 import { Modal } from '../components/Modal';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { CommunicationQuickActions } from '../components/CommunicationQuickActions';
@@ -38,6 +39,7 @@ import { Download, ShieldAlert, HeartPulse, Hash } from 'lucide-react';
 
 interface BusinessesProps {
   user: UserProfile;
+  defaultView?: 'kanban' | 'list';
 }
 
 const PIPELINE_STAGES: { key: BusinessStatus; label: string; headerColor: string; badgeColor: string }[] = [
@@ -49,15 +51,63 @@ const PIPELINE_STAGES: { key: BusinessStatus; label: string; headerColor: string
   { key: 'LOST', label: 'LOST', headerColor: 'bg-rose-600 text-white', badgeColor: 'bg-rose-50 text-rose-700 border-rose-200' }
 ];
 
-export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
-  const [businesses, setBusinesses] = useState<Business[]>([]);
-  const [teamMembers, setTeamMembers] = useState<UserProfile[]>([]);
-  const [loading, setLoading] = useState(true);
+export const Businesses: React.FC<BusinessesProps> = ({ user, defaultView }) => {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [businesses, setBusinesses] = useState<Business[]>(() => {
+    try {
+      const raw = localStorage.getItem('krg_businesses_store');
+      const parsed = raw ? (JSON.parse(raw) as Business[]) : [];
+      return parsed
+        .filter(b => b.organizationId === user.organizationId || !b.organizationId)
+        .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+    } catch {
+      return [];
+    }
+  });
+  const [teamMembers, setTeamMembers] = useState<UserProfile[]>(() => {
+    try {
+      const raw = localStorage.getItem('krg_users_store');
+      const parsed = raw ? (JSON.parse(raw) as UserProfile[]) : [];
+      return parsed.filter(u => u.organizationId === user.organizationId);
+    } catch {
+      return [];
+    }
+  });
+  const [loading, setLoading] = useState(() => {
+    try {
+      const raw = localStorage.getItem('krg_businesses_store');
+      const parsed = raw ? JSON.parse(raw) : [];
+      return parsed.length === 0;
+    } catch {
+      return true;
+    }
+  });
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
 
   // View Mode State
-  const [viewMode, setViewMode] = useState<'kanban' | 'list'>('kanban');
+  const [viewMode, setViewMode] = useState<'kanban' | 'list'>(defaultView || 'kanban');
+  const [listStyle, setListStyle] = useState<'crm' | 'master'>(() => {
+    try {
+      const hash = window.location.hash || '';
+      const queryIndex = hash.indexOf('?');
+      if (queryIndex !== -1) {
+        const params = new URLSearchParams(hash.slice(queryIndex));
+        const style = params.get('style');
+        if (style === 'master') return 'master';
+      }
+    } catch (e) {
+      console.warn('Failed parsing list style parameter', e);
+    }
+    return 'crm';
+  });
+
+  useEffect(() => {
+    if (defaultView) {
+      setViewMode(defaultView);
+    }
+  }, [defaultView]);
 
   // Filters & Search
   const [searchQuery, setSearchQuery] = useState('');
@@ -71,7 +121,21 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
   const [stuckFilter, setStuckFilter] = useState<boolean>(false);
   const [staleHotFilter, setStaleHotFilter] = useState<boolean>(false);
   const [followUpFilter, setFollowUpFilter] = useState<string>('All');
-  const [allActivities, setAllActivities] = useState<Activity[]>([]);
+  const [periodFilter, setPeriodFilter] = useState<string>('All');
+  const [assignedOnlyFilter, setAssignedOnlyFilter] = useState<boolean>(false);
+  const [noFollowUpFilter, setNoFollowUpFilter] = useState<boolean>(false);
+  const [upcomingFilter, setUpcomingFilter] = useState<boolean>(false);
+  const [allActivities, setAllActivities] = useState<Activity[]>(() => {
+    try {
+      const raw = localStorage.getItem('krg_activities_store');
+      const parsed = raw ? (JSON.parse(raw) as Activity[]) : [];
+      return parsed
+        .filter(a => a.organizationId === user.organizationId || !a.organizationId)
+        .sort((a, b) => new Date(b.activityDate || b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+    } catch {
+      return [];
+    }
+  });
   const [customTagInput, setCustomTagInput] = useState<string>('');
 
   // Bulk Selection & Assignment State
@@ -88,6 +152,7 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [isBulkDeleteModalOpen, setIsBulkDeleteModalOpen] = useState(false);
 
   // Selected Business for View/Edit/Delete
   const [selectedBusiness, setSelectedBusiness] = useState<Business | null>(null);
@@ -132,16 +197,16 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
       setError('');
       const res = await businessService.syncUnsyncedToFirestore(user.organizationId);
       if (res.syncedCount > 0) {
-        setSuccessMessage(`Successfully synced ${res.syncedCount} business contact(s) to Cloud Firestore!`);
+        setSuccessMessage(`Successfully synced ${res.syncedCount} business contact(s) to Cloud Database!`);
         setTimeout(() => setSuccessMessage(''), 4000);
         await loadBusinesses();
       } else {
-        setSuccessMessage('All business contacts are already saved in Cloud Firestore.');
+        setSuccessMessage('All business contacts are already saved in Cloud Database.');
         setTimeout(() => setSuccessMessage(''), 3000);
       }
     } catch (err: any) {
       console.error('Error syncing to cloud:', err);
-      setError(err.message || 'Failed to sync contacts to Cloud Firestore.');
+      setError(err.message || 'Failed to sync contacts to Cloud Database.');
     } finally {
       setSyncing(false);
     }
@@ -151,7 +216,9 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
   const loadBusinesses = async () => {
     if (!user.organizationId) return;
     try {
-      setLoading(true);
+      if (businesses.length === 0) {
+        setLoading(true);
+      }
       setError('');
       const [data, unCount, team, acts] = await Promise.all([
         businessService.getBusinesses(user.organizationId),
@@ -175,13 +242,22 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
     loadBusinesses();
   }, [user.organizationId]);
 
-  // Handle URL Query Params on mount (e.g., ?unassigned=true, ?health=AT_RISK, etc.)
+  // Handle URL Query Params on mount/change (e.g., ?unassigned=true, ?health=AT_RISK, etc.)
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
+    const params = new URLSearchParams(location.search);
+    const styleParam = params.get('style');
+    if (styleParam === 'master') {
+      setListStyle('master');
+    } else if (styleParam === 'crm') {
+      setListStyle('crm');
+    }
     if (params.get('unassigned') === 'true' || params.get('filter') === 'unassigned') {
       setTelecallerFilter('Unassigned');
       setSalespersonFilter('Unassigned');
     }
+    if (params.get('assigned') === 'true') setAssignedOnlyFilter(true);
+    if (params.get('noFollowUp') === 'true') setNoFollowUpFilter(true);
+    if (params.get('upcoming') === 'true') setUpcomingFilter(true);
     if (params.get('telecaller')) setTelecallerFilter(params.get('telecaller')!);
     if (params.get('salesperson')) setSalespersonFilter(params.get('salesperson')!);
     if (params.get('health')) setHealthFilter(params.get('health')!);
@@ -192,7 +268,7 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
     if (params.get('staleHot') === 'true') setStaleHotFilter(true);
     if (params.get('filter') === 'overdue') setFollowUpFilter('Overdue');
     if (params.get('filter') === 'today') setFollowUpFilter('Today');
-  }, []);
+  }, [location.search]);
 
   // Extract unique industries for filter
   const industries = useMemo(() => {
@@ -278,6 +354,30 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
     }
   };
 
+  // Pre-compute lead health and velocity using indexed lookup to avoid O(B * A) complexity in rendering loop
+  const leadHealthAndVelocityMap = useMemo(() => {
+    const activitiesByBizId: Record<string, Activity[]> = {};
+    allActivities.forEach(a => {
+      if (a.businessId) {
+        if (!activitiesByBizId[a.businessId]) {
+          activitiesByBizId[a.businessId] = [];
+        }
+        activitiesByBizId[a.businessId].push(a);
+      }
+    });
+
+    const map = new Map<string, { health: LeadHealthStatus; velocity: any }>();
+    businesses.forEach(b => {
+      if (b.id) {
+        const bizActs = activitiesByBizId[b.id] || [];
+        const health = calculateLeadHealth(b, bizActs);
+        const velocity = calculateLeadVelocity(b, bizActs);
+        map.set(b.id, { health, velocity });
+      }
+    });
+    return map;
+  }, [businesses, allActivities]);
+
   // Filtered Businesses
   const filteredBusinesses = useMemo(() => {
     return businesses.filter(b => {
@@ -330,7 +430,8 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
       // Health Filter
       let matchesHealth = true;
       if (healthFilter !== 'All') {
-        const health = calculateLeadHealth(b, allActivities);
+        const cached = b.id ? leadHealthAndVelocityMap.get(b.id) : null;
+        const health = cached ? cached.health : 'HEALTHY';
         matchesHealth = health === healthFilter;
       }
 
@@ -343,7 +444,8 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
       // Stuck Filter (>14 days in same stage without conversion)
       let matchesStuck = true;
       if (stuckFilter) {
-        const velocity = calculateLeadVelocity(b, allActivities);
+        const cached = b.id ? leadHealthAndVelocityMap.get(b.id) : null;
+        const velocity = cached ? cached.velocity : { daysInCurrentStage: 0 };
         matchesStuck = velocity.daysInCurrentStage >= 14 && b.status !== 'WON' && b.status !== 'Won' && b.status !== 'LOST' && b.status !== 'Lost';
       }
 
@@ -351,7 +453,8 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
       let matchesStaleHot = true;
       if (staleHotFilter) {
         const isHot = (b.temperature || b.leadTemperature) === 'HOT';
-        const health = calculateLeadHealth(b, allActivities);
+        const cached = b.id ? leadHealthAndVelocityMap.get(b.id) : null;
+        const health = cached ? cached.health : 'HEALTHY';
         matchesStaleHot = isHot && health === 'AT RISK';
       }
 
@@ -364,9 +467,47 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
         matchesFollowUp = b.nextFollowUpDate === todayStr && b.status !== 'WON' && b.status !== 'Won' && b.status !== 'LOST' && b.status !== 'Lost';
       }
 
-      return matchesSearch && matchesStatus && matchesIndustry && matchesTemp && matchesTelecaller && matchesSalesperson && matchesHealth && matchesTag && matchesStuck && matchesStaleHot && matchesFollowUp;
+      // Period Filter
+      let matchesPeriod = true;
+      if (periodFilter !== 'All') {
+        const createdDate = b.createdAt ? new Date(b.createdAt) : null;
+        if (!createdDate) {
+          matchesPeriod = false;
+        } else {
+          const now = new Date();
+          if (periodFilter === 'ThisMonth') {
+            matchesPeriod = createdDate.getMonth() === now.getMonth() && createdDate.getFullYear() === now.getFullYear();
+          } else if (periodFilter === 'Last30Days') {
+            const thirtyDaysAgo = new Date();
+            thirtyDaysAgo.setDate(now.getDate() - 30);
+            matchesPeriod = createdDate >= thirtyDaysAgo;
+          } else if (periodFilter === 'ThisYear') {
+            matchesPeriod = createdDate.getFullYear() === now.getFullYear();
+          }
+        }
+      }
+
+      // Assigned Only Filter
+      let matchesAssignedOnly = true;
+      if (assignedOnlyFilter) {
+        matchesAssignedOnly = !!(b.assignedTelecaller || b.assignedTelecallerName || b.assignedSalesperson || b.assignedSalespersonName);
+      }
+
+      // No Follow Up Filter
+      let matchesNoFollowUp = true;
+      if (noFollowUpFilter) {
+        matchesNoFollowUp = !b.nextFollowUpDate;
+      }
+
+      // Upcoming Filter
+      let matchesUpcoming = true;
+      if (upcomingFilter) {
+        matchesUpcoming = !!(b.nextFollowUpDate && b.nextFollowUpDate > todayStr && b.status !== 'WON' && b.status !== 'Won' && b.status !== 'LOST' && b.status !== 'Lost');
+      }
+
+      return matchesSearch && matchesStatus && matchesIndustry && matchesTemp && matchesTelecaller && matchesSalesperson && matchesHealth && matchesTag && matchesStuck && matchesStaleHot && matchesFollowUp && matchesPeriod && matchesAssignedOnly && matchesNoFollowUp && matchesUpcoming;
     });
-  }, [businesses, searchQuery, statusFilter, industryFilter, temperatureFilter, telecallerFilter, salespersonFilter, healthFilter, tagFilter, stuckFilter, staleHotFilter, followUpFilter, allActivities, user]);
+  }, [businesses, searchQuery, statusFilter, industryFilter, temperatureFilter, telecallerFilter, salespersonFilter, leadHealthAndVelocityMap, tagFilter, stuckFilter, staleHotFilter, followUpFilter, periodFilter, assignedOnlyFilter, noFollowUpFilter, upcomingFilter, user]);
 
   // Open Add Modal
   const handleOpenAdd = () => {
@@ -536,6 +677,25 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
     }
   };
 
+  // Confirm Bulk Delete Businesses
+  const handleBulkDeleteConfirm = async () => {
+    if (selectedIds.length === 0) return;
+
+    try {
+      setSaving(true);
+      await Promise.all(selectedIds.map(id => businessService.deleteBusiness(id)));
+      setBusinesses(prev => prev.filter(b => b.id && !selectedIds.includes(b.id)));
+      setSelectedIds([]);
+      setIsBulkDeleteModalOpen(false);
+      showSuccess(`Successfully deleted ${selectedIds.length} business record(s).`);
+    } catch (err: any) {
+      console.error('Error deleting businesses in bulk:', err);
+      alert('Failed to delete some business records: ' + err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   // Quick Add Activity inside Business Detail view
   const handleQuickActivitySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -573,20 +733,45 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
     setTimeout(() => setSuccessMessage(''), 3000);
   };
 
+  const handleResetFilters = () => {
+    setSearchQuery('');
+    setTelecallerFilter('All');
+    setSalespersonFilter('All');
+    setTemperatureFilter('All');
+    setStatusFilter('All');
+    setHealthFilter('All');
+    setTagFilter('All');
+    setFollowUpFilter('All');
+    setIndustryFilter('All');
+    setStuckFilter(false);
+    setStaleHotFilter(false);
+    setPeriodFilter('All');
+    setAssignedOnlyFilter(false);
+    setNoFollowUpFilter(false);
+    setUpcomingFilter(false);
+    navigate(location.pathname, { replace: true });
+  };
+
   return (
     <div className="space-y-6">
       {/* Top Header Controls */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
-          <h1 className="text-xl font-bold text-slate-900 tracking-tight">Businesses Directory</h1>
-          <p className="text-xs text-slate-500 mt-0.5">Manage your client accounts, leads, and organizational records.</p>
+          <h1 className="text-xl font-bold text-slate-900 tracking-tight">
+            {viewMode === 'list' ? 'Contact Directory' : 'KRGONE Sales Navigator™ — SALES PIPELINE'}
+          </h1>
+          <p className="text-xs text-slate-500 mt-0.5">
+            {viewMode === 'list' 
+              ? 'View and search your complete list of organizational contacts and business directory.' 
+              : 'Monitor your complete lead database, sales funnel, ownership and follow-up activity.'}
+          </p>
         </div>
         <div className="flex items-center space-x-3">
           <button
             onClick={handleSyncToCloud}
             disabled={syncing}
             className="inline-flex items-center justify-center space-x-2 px-4 py-2.5 bg-amber-400 hover:bg-amber-500 active:bg-amber-600 text-slate-950 font-extrabold text-xs rounded-xl shadow-sm transition-all cursor-pointer border border-amber-500 disabled:opacity-50"
-            title="Sync records to Cloud Firestore database (default)"
+            title="Sync records to Cloud Database (default)"
           >
             <CloudUpload className={`w-4 h-4 text-amber-950 ${syncing ? 'animate-bounce' : ''}`} />
             <span>
@@ -594,24 +779,17 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
                 ? 'Syncing to Cloud...' 
                 : unsyncedCount > 0 
                   ? `⚡ Sync ${unsyncedCount} Unsynced Records` 
-                  : '⚡ Sync to Cloud Firestore'}
+                  : '⚡ Sync to Cloud Database'}
             </span>
           </button>
           <button
             onClick={() => loadBusinesses()}
             className="inline-flex items-center justify-center p-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-xl shadow-xs transition-colors"
-            title="Refresh from Cloud Firestore"
+            title="Refresh from Cloud Database"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           </button>
-          <button
-            onClick={() => exportBusinessesToCSV(filteredBusinesses, allActivities)}
-            className="inline-flex items-center justify-center space-x-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs rounded-xl shadow-sm transition-colors cursor-pointer"
-            title="Export filtered leads to Excel/CSV"
-          >
-            <Download className="w-4 h-4" />
-            <span>Export CSV</span>
-          </button>
+
           <button
             onClick={handleOpenAdd}
             className="inline-flex items-center justify-center space-x-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs rounded-xl shadow-sm transition-colors"
@@ -631,7 +809,7 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
           <div>
             <div className="flex items-center space-x-2">
               <h3 className="text-xs font-extrabold uppercase tracking-wider text-amber-400">
-                Cloud Firestore Database Sync Engine
+                Cloud Database Sync Engine
               </h3>
               <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-full text-[10px] font-bold">
                 Target: (default)
@@ -640,11 +818,11 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
             <p className="text-xs text-slate-300 mt-1">
               {unsyncedCount > 0 ? (
                 <span className="text-amber-300 font-semibold">
-                  ⚠️ {unsyncedCount} contact(s) waiting in local cache. Click <strong>Sync Now</strong> to upload directly to Cloud Firestore.
+                  ⚠️ {unsyncedCount} contact(s) waiting in local cache. Click <strong>Sync Now</strong> to upload directly to Cloud Database.
                 </span>
               ) : (
                 <span className="text-slate-300">
-                  ✓ All {businesses.length} contact records are verified and synced with your Cloud Firestore database.
+                  ✓ All {businesses.length} contact records are verified and synced with your Cloud Database.
                 </span>
               )}
             </p>
@@ -655,7 +833,7 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
             onClick={() => loadBusinesses()}
             disabled={loading}
             className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs rounded-xl border border-slate-700 transition-colors flex items-center space-x-1.5"
-            title="Refresh from Cloud Firestore"
+            title="Refresh from Cloud Database"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
             <span>Refresh</span>
@@ -693,6 +871,18 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          {/* Date / Period Filter */}
+          <select
+            value={periodFilter}
+            onChange={(e) => setPeriodFilter(e.target.value)}
+            className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2 text-xs text-slate-700 font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="All">All Time</option>
+            <option value="ThisMonth">This Month (Aug 2026)</option>
+            <option value="Last30Days">Last 30 Days</option>
+            <option value="ThisYear">This Year</option>
+          </select>
+
           {/* Telecaller Filter */}
           <select
             value={telecallerFilter}
@@ -829,22 +1019,38 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
             <span>⚠️ Stale Hot</span>
           </button>
 
+          {/* RESET FILTERS BUTTON */}
+          <button
+            onClick={handleResetFilters}
+            className="px-3 py-2 text-xs font-bold rounded-lg border bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100 transition-all flex items-center space-x-1.5"
+            title="Reset all search and filter fields"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>Reset</span>
+          </button>
+
           {/* VIEW SWITCHER TOGGLE */}
           <div className="flex items-center bg-slate-100 p-1 rounded-lg border border-slate-200">
             <button
-              onClick={() => setViewMode('kanban')}
+              onClick={() => {
+                setViewMode('kanban');
+                navigate('/businesses');
+              }}
               className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all flex items-center space-x-1 ${
                 viewMode === 'kanban'
                   ? 'bg-blue-600 text-white shadow-2xs'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
-              title="Kanban Visual Lead Pipeline"
+              title="Sales Pipeline Dashboard"
             >
               <LayoutGrid className="w-3.5 h-3.5" />
               <span>Pipeline</span>
             </button>
             <button
-              onClick={() => setViewMode('list')}
+              onClick={() => {
+                setViewMode('list');
+                navigate('/contact-directory');
+              }}
               className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all flex items-center space-x-1 ${
                 viewMode === 'list'
                   ? 'bg-blue-600 text-white shadow-2xs'
@@ -859,65 +1065,78 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
         </div>
       </div>
 
-      {/* BULK LEAD ASSIGNMENT ACTION BAR */}
+      {/* BULK ACTION BAR */}
       {selectedIds.length > 0 && (
         <div className="bg-slate-900 text-white p-3.5 rounded-xl shadow-lg border border-slate-700 flex flex-wrap items-center justify-between gap-3 animate-in fade-in slide-in-from-top-2">
           <div className="flex items-center space-x-2">
             <span className="bg-blue-600 text-white font-extrabold text-xs px-2.5 py-1 rounded-md">
               {selectedIds.length} Selected
             </span>
-            <span className="text-xs text-slate-300 font-bold">Bulk Assign Lead Ownership:</span>
+            <span className="text-xs text-slate-300 font-bold">Bulk Actions:</span>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <select
-              value={bulkTelecaller}
-              onChange={(e) => setBulkTelecaller(e.target.value)}
-              className="bg-slate-800 text-white border border-slate-700 text-xs font-semibold rounded-lg px-2.5 py-1.5 focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="">-- Assign Telecaller --</option>
-              <option value="__NONE__">(Unassign Telecaller)</option>
-              {teamMembers
-                .filter(m => m.role === 'Telecaller' || m.role === 'Manager')
-                .map(m => (
-                  <option key={m.uid} value={m.name || m.email}>
-                    📞 {m.name || m.email} ({m.role})
-                  </option>
-                ))
-              }
-            </select>
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Assignment Controls Group */}
+            <div className="flex flex-wrap items-center gap-2 border-r border-slate-800 pr-3 mr-1">
+              <select
+                value={bulkTelecaller}
+                onChange={(e) => setBulkTelecaller(e.target.value)}
+                className="bg-slate-800 text-white border border-slate-700 text-xs font-semibold rounded-lg px-2.5 py-1.5 focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">-- Assign Telecaller --</option>
+                <option value="__NONE__">(Unassign Telecaller)</option>
+                {teamMembers
+                  .filter(m => m.role === 'Telecaller' || m.role === 'Manager')
+                  .map(m => (
+                    <option key={m.uid} value={m.name || m.email}>
+                      📞 {m.name || m.email} ({m.role})
+                    </option>
+                  ))
+                }
+              </select>
 
-            <select
-              value={bulkSalesperson}
-              onChange={(e) => setBulkSalesperson(e.target.value)}
-              className="bg-slate-800 text-white border border-slate-700 text-xs font-semibold rounded-lg px-2.5 py-1.5 focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="">-- Assign Salesperson --</option>
-              <option value="__NONE__">(Unassign Salesperson)</option>
-              {teamMembers
-                .filter(m => m.role === 'Salesperson' || m.role === 'Manager')
-                .map(m => (
-                  <option key={m.uid} value={m.name || m.email}>
-                    💼 {m.name || m.email} ({m.role})
-                  </option>
-                ))
-              }
-            </select>
+              <select
+                value={bulkSalesperson}
+                onChange={(e) => setBulkSalesperson(e.target.value)}
+                className="bg-slate-800 text-white border border-slate-700 text-xs font-semibold rounded-lg px-2.5 py-1.5 focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">-- Assign Salesperson --</option>
+                <option value="__NONE__">(Unassign Salesperson)</option>
+                {teamMembers
+                  .filter(m => m.role === 'Salesperson' || m.role === 'Manager')
+                  .map(m => (
+                    <option key={m.uid} value={m.name || m.email}>
+                      💼 {m.name || m.email} ({m.role})
+                    </option>
+                  ))
+                }
+              </select>
 
+              <button
+                type="button"
+                onClick={handleBulkAssign}
+                disabled={bulkAssigning}
+                className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-extrabold px-3.5 py-1.5 rounded-lg shadow-xs transition-colors flex items-center space-x-1.5 cursor-pointer disabled:opacity-50"
+              >
+                <UserCheck className="w-3.5 h-3.5" />
+                <span>{bulkAssigning ? 'Assigning...' : 'ASSIGN SELECTED'}</span>
+              </button>
+            </div>
+
+            {/* Bulk Delete Control */}
             <button
               type="button"
-              onClick={handleBulkAssign}
-              disabled={bulkAssigning}
-              className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-extrabold px-3.5 py-1.5 rounded-lg shadow-xs transition-colors flex items-center space-x-1.5 cursor-pointer disabled:opacity-50"
+              onClick={() => setIsBulkDeleteModalOpen(true)}
+              className="bg-rose-600 hover:bg-rose-500 text-white text-xs font-extrabold px-3.5 py-1.5 rounded-lg shadow-xs transition-colors flex items-center space-x-1.5 cursor-pointer"
             >
-              <UserCheck className="w-3.5 h-3.5" />
-              <span>{bulkAssigning ? 'Assigning...' : 'ASSIGN SELECTED'}</span>
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>DELETE SELECTED</span>
             </button>
 
             <button
               type="button"
               onClick={() => setSelectedIds([])}
-              className="text-slate-400 hover:text-white text-xs font-semibold px-2 py-1"
+              className="text-slate-400 hover:text-white text-xs font-semibold px-2 py-1 cursor-pointer"
             >
               Deselect All
             </button>
@@ -949,237 +1168,739 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
           </button>
         </div>
       ) : viewMode === 'kanban' ? (
-        /* KANBAN VISUAL LEAD PIPELINE VIEW */
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 overflow-x-auto pb-4">
-          {PIPELINE_STAGES.map(stage => {
-            const stageLeads = filteredBusinesses.filter(
-              b => (b.status || 'NEW').toUpperCase() === stage.key
-            );
+        /* KRGONE SALES NAVIGATOR™ — EXECUTIVE LEAD MANAGEMENT INTELLIGENCE DASHBOARD */
+        (() => {
+          const totalDatabase = filteredBusinesses.length;
+          const lostCount = filteredBusinesses.filter(b => (b.status || 'NEW').toUpperCase() === 'LOST').length;
+          const totalLeads = filteredBusinesses.filter(b => (b.status || 'NEW').toUpperCase() !== 'LOST').length;
 
-            return (
-              <div
-                key={stage.key}
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  const bizId = e.dataTransfer.getData('text/plain');
-                  if (bizId) handleUpdateStage(bizId, stage.key);
-                }}
-                className="bg-slate-100/70 rounded-xl p-2.5 border border-slate-200/80 flex flex-col min-h-[500px]"
-              >
-                {/* Column Header */}
-                <div className={`p-2 rounded-lg ${stage.headerColor} flex items-center justify-between mb-3 shadow-2xs`}>
-                  <span className="font-black text-[11px] tracking-wider uppercase">{stage.label}</span>
-                  <span className="bg-white/20 px-2 py-0.5 rounded-full text-[10px] font-bold">
-                    {stageLeads.length}
-                  </span>
-                </div>
+          const assignedCount = filteredBusinesses.filter(b => 
+            (b.assignedSalesperson || b.assignedSalespersonName || b.assignedTelecaller || b.assignedTelecallerName) && 
+            (b.status || 'NEW').toUpperCase() !== 'LOST'
+          ).length;
 
-                {/* Cards Container */}
-                <div className="space-y-2.5 flex-1 overflow-y-auto">
-                  {stageLeads.length === 0 ? (
-                    <div className="p-4 text-center border-2 border-dashed border-slate-200 rounded-xl text-[11px] text-slate-400 font-medium">
-                      Drop lead here
+          const unassignedCount = totalLeads - assignedCount;
+
+          const newLeadsCount = filteredBusinesses.filter(b => (b.status || 'NEW').toUpperCase() === 'NEW').length;
+          const contactedCount = filteredBusinesses.filter(b => (b.status || '').toUpperCase() === 'CONTACTED').length;
+          const qualifiedCount = filteredBusinesses.filter(b => (b.status || '').toUpperCase() === 'QUALIFIED').length;
+          const proposalCount = filteredBusinesses.filter(b => (b.status || '').toUpperCase() === 'PROPOSAL').length;
+          const wonCount = filteredBusinesses.filter(b => (b.status || '').toUpperCase() === 'WON').length;
+
+          const todayStr = new Date().toISOString().split('T')[0];
+          const followUpsDueCount = filteredBusinesses.filter(b => 
+            b.nextFollowUpDate === todayStr && 
+            (b.status || 'NEW').toUpperCase() !== 'WON' && 
+            (b.status || 'NEW').toUpperCase() !== 'LOST'
+          ).length;
+
+          const overdueCount = filteredBusinesses.filter(b => 
+            b.nextFollowUpDate && 
+            b.nextFollowUpDate < todayStr && 
+            (b.status || 'NEW').toUpperCase() !== 'WON' && 
+            (b.status || 'NEW').toUpperCase() !== 'LOST'
+          ).length;
+
+          const upcomingCount = filteredBusinesses.filter(b => 
+            b.nextFollowUpDate && 
+            b.nextFollowUpDate > todayStr && 
+            (b.status || 'NEW').toUpperCase() !== 'WON' && 
+            (b.status || 'NEW').toUpperCase() !== 'LOST'
+          ).length;
+
+          const noFollowUpCount = filteredBusinesses.filter(b => 
+            !b.nextFollowUpDate && 
+            (b.status || 'NEW').toUpperCase() !== 'WON' && 
+            (b.status || 'NEW').toUpperCase() !== 'LOST'
+          ).length;
+
+          // Activity statistics (This Month)
+          const now = new Date();
+          const currentMonth = now.getMonth();
+          const currentYear = now.getFullYear();
+          const currentMonthActivities = allActivities.filter(a => {
+            const actDate = new Date(a.activityDate || a.createdAt);
+            return actDate.getMonth() === currentMonth && actDate.getFullYear() === currentYear;
+          });
+
+          const callsCount = currentMonthActivities.filter(a => a.type === 'Call').length;
+          const whatsappCount = currentMonthActivities.filter(a => a.type === 'WhatsApp').length;
+          const emailCount = currentMonthActivities.filter(a => a.type === 'Email').length;
+          const totalActivitiesCount = currentMonthActivities.length;
+
+          // Lead Health statistics
+          const healthyCount = filteredBusinesses.filter(b => {
+            const cached = b.id ? leadHealthAndVelocityMap.get(b.id) : null;
+            return (cached ? cached.health : 'HEALTHY') === 'HEALTHY';
+          }).length;
+
+          const attentionCount = filteredBusinesses.filter(b => {
+            const cached = b.id ? leadHealthAndVelocityMap.get(b.id) : null;
+            return (cached ? cached.health : 'HEALTHY') === 'NEEDS ATTENTION';
+          }).length;
+
+          const staleCount = filteredBusinesses.filter(b => {
+            const cached = b.id ? leadHealthAndVelocityMap.get(b.id) : null;
+            return (cached ? cached.health : 'HEALTHY') === 'AT RISK';
+          }).length;
+
+          const hotCount = filteredBusinesses.filter(b => 
+            (b.temperature || b.leadTemperature) === 'HOT'
+          ).length;
+
+          const stuckCount = filteredBusinesses.filter(b => {
+            const cached = b.id ? leadHealthAndVelocityMap.get(b.id) : null;
+            const velocity = cached ? cached.velocity : { daysInCurrentStage: 0 };
+            return velocity.daysInCurrentStage >= 14 && 
+              (b.status || 'NEW').toUpperCase() !== 'WON' && 
+              (b.status || 'NEW').toUpperCase() !== 'LOST';
+          }).length;
+
+          const salespersonMetrics = getTeamPerformanceMetrics(filteredBusinesses, allActivities, teamMembers);
+
+          const getPercentage = (val: number, tot: number) => {
+            if (tot <= 0) return '0.0%';
+            return ((val / tot) * 100).toFixed(1) + '%';
+          };
+
+          const assignedPercent = totalLeads > 0 ? (assignedCount / totalLeads) * 100 : 0;
+
+          const kpis = [
+            {
+              label: 'TOTAL DATABASE',
+              value: totalDatabase,
+              sub: 'Complete Records',
+              icon: <Building2 className="w-4 h-4 text-blue-600" />,
+              bg: 'bg-blue-50/70 border-blue-100 hover:bg-blue-50',
+              onClick: () => navigate('/contact-directory')
+            },
+            {
+              label: 'TOTAL LEADS',
+              value: totalLeads,
+              sub: 'Active & Tracked',
+              icon: <UserCheck className="w-4 h-4 text-emerald-600" />,
+              bg: 'bg-emerald-50/70 border-emerald-100 hover:bg-emerald-50',
+              onClick: () => navigate('/contact-directory')
+            },
+            {
+              label: 'ASSIGNED',
+              value: assignedCount,
+              sub: `${getPercentage(assignedCount, totalLeads)} of Total Leads`,
+              icon: <User className="w-4 h-4 text-indigo-600" />,
+              bg: 'bg-indigo-50/70 border-indigo-100 hover:bg-indigo-50',
+              onClick: () => navigate('/contact-directory?assigned=true')
+            },
+            {
+              label: 'UNASSIGNED',
+              value: unassignedCount,
+              sub: `${getPercentage(unassignedCount, totalLeads)} of Total Leads`,
+              icon: <User className="w-4 h-4 text-amber-600" />,
+              bg: 'bg-amber-50/70 border-amber-100 hover:bg-amber-50',
+              onClick: () => navigate('/contact-directory?unassigned=true')
+            },
+            {
+              label: 'NEW LEADS',
+              value: newLeadsCount,
+              sub: `${getPercentage(newLeadsCount, totalLeads)} of Total Leads`,
+              icon: <Plus className="w-4 h-4 text-sky-600" />,
+              bg: 'bg-sky-50/70 border-sky-100 hover:bg-sky-50',
+              onClick: () => navigate('/contact-directory?status=NEW')
+            },
+            {
+              label: 'FOLLOW-UPS DUE',
+              value: followUpsDueCount,
+              sub: 'Due Today',
+              icon: <Calendar className="w-4 h-4 text-purple-600" />,
+              bg: 'bg-purple-50/70 border-purple-100 hover:bg-purple-50',
+              onClick: () => navigate('/contact-directory?filter=today')
+            },
+            // Row 2
+            {
+              label: 'CONTACTED',
+              value: contactedCount,
+              sub: `${getPercentage(contactedCount, totalLeads)} of Total Leads`,
+              icon: <Phone className="w-4 h-4 text-indigo-600" />,
+              bg: 'bg-indigo-50/70 border-indigo-100 hover:bg-indigo-50',
+              onClick: () => navigate('/contact-directory?status=CONTACTED')
+            },
+            {
+              label: 'QUALIFIED',
+              value: qualifiedCount,
+              sub: `${getPercentage(qualifiedCount, totalLeads)} of Total Leads`,
+              icon: <CheckCircle2 className="w-4 h-4 text-purple-600" />,
+              bg: 'bg-purple-50/70 border-purple-100 hover:bg-purple-50',
+              onClick: () => navigate('/contact-directory?status=QUALIFIED')
+            },
+            {
+              label: 'PROPOSAL',
+              value: proposalCount,
+              sub: `${getPercentage(proposalCount, totalLeads)} of Total Leads`,
+              icon: <Calendar className="w-4 h-4 text-orange-600" />,
+              bg: 'bg-orange-50/70 border-orange-100 hover:bg-orange-50',
+              onClick: () => navigate('/contact-directory?status=PROPOSAL')
+            },
+            {
+              label: 'WON',
+              value: wonCount,
+              sub: `${getPercentage(wonCount, totalLeads)} of Total Leads`,
+              icon: <CheckCircle2 className="w-4 h-4 text-emerald-600" />,
+              bg: 'bg-emerald-50/70 border-emerald-100 hover:bg-emerald-50',
+              onClick: () => navigate('/contact-directory?status=WON')
+            },
+            {
+              label: 'LOST',
+              value: lostCount,
+              sub: `${getPercentage(lostCount, totalDatabase)} of Database`,
+              icon: <XCircle className="w-4 h-4 text-rose-600" />,
+              bg: 'bg-rose-50/70 border-rose-100 hover:bg-rose-50',
+              onClick: () => navigate('/contact-directory?status=LOST')
+            },
+            {
+              label: 'OVERDUE',
+              value: overdueCount,
+              sub: 'Action Required',
+              icon: <Clock className="w-4 h-4 text-rose-600" />,
+              bg: 'bg-rose-50/70 border-rose-100 hover:bg-rose-50',
+              onClick: () => navigate('/contact-directory?filter=overdue')
+            }
+          ];
+
+          return (
+            <div className="space-y-6">
+              {/* Row 1: KPI Statistics Grid */}
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+                {kpis.map(kpi => (
+                  <button
+                    key={kpi.label}
+                    onClick={kpi.onClick}
+                    className={`p-4 rounded-xl border border-slate-200/80 bg-white hover:shadow-xs transition-all flex flex-col justify-between min-h-[110px] text-left cursor-pointer group hover:scale-[1.01] active:scale-[0.99]`}
+                  >
+                    <div className="flex items-start justify-between w-full">
+                      <span className="text-[9px] font-extrabold uppercase tracking-widest text-slate-400">
+                        {kpi.label}
+                      </span>
+                      <div className={`p-1.5 rounded-lg border border-slate-100 bg-slate-50 group-hover:scale-110 transition-transform`}>
+                        {kpi.icon}
+                      </div>
                     </div>
-                  ) : (
-                    stageLeads.map(biz => (
-                      <div
-                        key={biz.id}
-                        draggable
-                        onDragStart={(e) => e.dataTransfer.setData('text/plain', biz.id || '')}
-                        className={`p-3 rounded-xl border shadow-2xs hover:shadow-md transition-all space-y-2 cursor-grab active:cursor-grabbing group ${
-                          biz.id && selectedIds.includes(biz.id)
-                            ? 'bg-blue-50/90 border-blue-400 ring-2 ring-blue-500/20'
-                            : 'bg-white border-slate-200'
-                        }`}
+                    <div className="mt-2">
+                      <span className="text-xl font-black text-slate-900 tracking-tight">
+                        {kpi.value.toLocaleString()}
+                      </span>
+                      <p className="text-[10px] font-semibold text-slate-400 mt-0.5 line-clamp-1">
+                        {kpi.sub}
+                      </p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+
+              {/* Row 2: Sales Funnel, Lead Ownership, Salesperson Workload */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                {/* Visual Sales Funnel (lg:col-span-4) */}
+                <div className="lg:col-span-4 bg-white p-5 rounded-2xl border border-slate-200/80 flex flex-col justify-between">
+                  <div>
+                    <h3 className="text-xs font-black text-slate-800 uppercase tracking-widest mb-4">
+                      Sales Funnel Analytics
+                    </h3>
+                    <div className="space-y-2 flex flex-col">
+                      {/* Funnel Stage 1: Total Leads */}
+                      <div 
+                        onClick={() => navigate('/contact-directory')}
+                        className="w-full bg-blue-600 hover:bg-blue-700 text-white rounded-xl p-3 flex items-center justify-between cursor-pointer transition-transform hover:scale-[1.01]"
                       >
-                        {/* Header: Select Checkbox + Company Name + Temp */}
-                        <div className="flex items-start justify-between gap-1.5">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (biz.id) toggleSelectOne(biz.id);
-                            }}
-                            className="mt-0.5 text-slate-400 hover:text-blue-600 transition-colors shrink-0"
-                            title={biz.id && selectedIds.includes(biz.id) ? 'Deselect lead' : 'Select lead for bulk assignment'}
-                          >
-                            {biz.id && selectedIds.includes(biz.id) ? (
-                              <CheckSquare className="w-4 h-4 text-blue-600 fill-blue-50" />
-                            ) : (
-                              <Square className="w-4 h-4" />
-                            )}
-                          </button>
-
-                          <div className="min-w-0 flex-1">
-                            <h4
-                              onClick={() => handleOpenView(biz)}
-                              className="font-bold text-xs text-slate-900 hover:text-blue-600 transition-colors cursor-pointer truncate"
-                              title={biz.companyName}
-                            >
-                              {biz.companyName}
-                            </h4>
-                            <p className="text-[11px] text-slate-500 truncate">
-                              {biz.contactPerson || 'No contact'}
-                            </p>
-                          </div>
-
-                          {biz.temperature && (
-                            <span className={`px-1.5 py-0.5 text-[9px] font-extrabold rounded-md border shrink-0 ${
-                              biz.temperature === 'HOT'
-                                ? 'bg-rose-50 text-rose-700 border-rose-200'
-                                : biz.temperature === 'WARM'
-                                ? 'bg-amber-50 text-amber-700 border-amber-200'
-                                : 'bg-blue-50 text-blue-700 border-blue-200'
-                            }`}>
-                              {biz.temperature === 'HOT' ? '🔥 HOT' : biz.temperature === 'WARM' ? '☀️ WARM' : '❄️ COLD'}
-                            </span>
-                          )}
-                        </div>
-
-                        {/* Assigned + Follow up details */}
-                        <div className="text-[10px] space-y-1 bg-slate-50 p-1.5 rounded-lg border border-slate-100">
-                          {(biz.assignedTelecaller || biz.assignedSalesperson) && (
-                            <p className="text-slate-600 font-medium truncate">
-                              👤 {biz.assignedTelecaller || biz.assignedSalesperson}
-                            </p>
-                          )}
-                          {biz.nextFollowUpDate && (
-                            <p className="text-slate-700 font-semibold flex items-center">
-                              <Clock className="w-3 h-3 mr-1 text-slate-400" />
-                              {biz.nextFollowUpDate}
-                            </p>
-                          )}
-                          {biz.nextAction && (
-                            <p className="text-blue-700 font-medium truncate">
-                              🎯 {biz.nextAction}
-                            </p>
-                          )}
-                          {/* Lead Health and Velocity */}
-                          {biz.dealValue !== undefined && biz.dealValue !== null && biz.dealValue !== 0 && (
-                            <div className="text-[10px] text-emerald-700 font-extrabold flex items-center justify-between bg-emerald-50 px-2 py-1 rounded-lg border border-emerald-100">
-                              <span className="flex items-center">
-                                <span className="mr-0.5">₹</span>
-                                {biz.dealValue.toLocaleString('en-IN')}
-                              </span>
-                              {biz.expectedClosureDate && (
-                                <span className="text-slate-500 font-medium text-[8px]">
-                                  Exp: {biz.expectedClosureDate}
-                                </span>
-                              )}
-                            </div>
-                          )}
-                          <div className="pt-1 border-t border-slate-200/60 flex items-center justify-between text-[9px] text-slate-500 font-semibold">
-                            <span className="flex items-center">
-                              {(() => {
-                                const h = calculateLeadHealth(biz, allActivities);
-                                return h === 'HEALTHY' ? (
-                                  <span className="text-emerald-600 flex items-center"><HeartPulse className="w-3 h-3 mr-0.5" /> Healthy</span>
-                                ) : h === 'NEEDS ATTENTION' ? (
-                                  <span className="text-amber-600 flex items-center"><HeartPulse className="w-3 h-3 mr-0.5" /> Attention</span>
-                                ) : (
-                                  <span className="text-rose-600 flex items-center"><ShieldAlert className="w-3 h-3 mr-0.5" /> At Risk</span>
-                                );
-                              })()}
-                            </span>
-                            <span>
-                              {(() => {
-                                const vel = calculateLeadVelocity(biz, allActivities);
-                                return `Age: ${vel.totalAgeDays}d • Stage: ${vel.daysInCurrentStage}d`;
-                              })()}
-                            </span>
-                          </div>
-                          {/* Tags list */}
-                          {biz.tags && biz.tags.length > 0 && (
-                            <div className="flex flex-wrap gap-1 pt-1">
-                              {biz.tags.map(tag => (
-                                <span key={tag} className="px-1 py-0.5 bg-slate-200 text-slate-700 rounded text-[8px] font-bold">
-                                  #{tag}
-                                </span>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Communication Quick Actions */}
-                        <div className="pt-1 border-t border-slate-100 flex items-center justify-between">
-                          <CommunicationQuickActions
-                            mobile={biz.mobile}
-                            email={biz.email}
-                            contactPerson={biz.contactPerson}
-                            companyName={biz.companyName}
-                            onLogActivity={() => setActivityTargetBiz(biz)}
-                            size="sm"
-                          />
-                        </div>
-
-                        {/* Footer Controls */}
-                        <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-[10px]">
-                          <select
-                            value={stage.key}
-                            onChange={(e) => biz.id && handleUpdateStage(biz.id, e.target.value as BusinessStatus)}
-                            className="bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5 font-bold text-slate-700 focus:outline-none"
-                          >
-                            {PIPELINE_STAGES.map(s => (
-                              <option key={s.key} value={s.key}>Move: {s.label}</option>
-                            ))}
-                          </select>
-
-                          <div className="flex items-center space-x-1">
-                            <button
-                              onClick={() => handleOpenEdit(biz)}
-                              className="p-1 text-slate-400 hover:text-slate-700 rounded"
-                              title="Edit"
-                            >
-                              <Edit3 className="w-3 h-3" />
-                            </button>
-                            <button
-                              onClick={() => handleOpenDelete(biz)}
-                              className="p-1 text-slate-400 hover:text-rose-600 rounded"
-                              title="Delete"
-                            >
-                              <Trash2 className="w-3 h-3" />
-                            </button>
-                          </div>
+                        <span className="text-[10px] font-black uppercase tracking-wider">1. Total Leads</span>
+                        <div className="flex items-center space-x-1.5">
+                          <span className="text-sm font-black">{totalLeads}</span>
+                          <span className="text-[9px] font-bold opacity-80">(100.0%)</span>
                         </div>
                       </div>
-                    ))
-                  )}
+
+                      {/* Arrow */}
+                      <div className="flex justify-center -my-1">
+                        <div className="w-2.5 h-2.5 bg-slate-100 border-r border-b border-slate-200 rotate-45"></div>
+                      </div>
+
+                      {/* Funnel Stage 2: New Leads */}
+                      <div 
+                        onClick={() => navigate('/contact-directory?status=NEW')}
+                        className="w-[95%] mx-auto bg-blue-500 hover:bg-blue-600 text-white rounded-xl p-2.5 flex items-center justify-between cursor-pointer transition-transform hover:scale-[1.01]"
+                      >
+                        <span className="text-[10px] font-black uppercase tracking-wider">2. New Leads</span>
+                        <div className="flex items-center space-x-1.5">
+                          <span className="text-xs font-black">{newLeadsCount}</span>
+                          <span className="text-[9px] font-bold opacity-80">({getPercentage(newLeadsCount, totalLeads)})</span>
+                        </div>
+                      </div>
+
+                      {/* Arrow */}
+                      <div className="flex justify-center -my-1">
+                        <div className="w-2.5 h-2.5 bg-slate-100 border-r border-b border-slate-200 rotate-45"></div>
+                      </div>
+
+                      {/* Funnel Stage 3: Contacted */}
+                      <div 
+                        onClick={() => navigate('/contact-directory?status=CONTACTED')}
+                        className="w-[90%] mx-auto bg-sky-500 hover:bg-sky-600 text-white rounded-xl p-2.5 flex items-center justify-between cursor-pointer transition-transform hover:scale-[1.01]"
+                      >
+                        <span className="text-[10px] font-black uppercase tracking-wider">3. Contacted</span>
+                        <div className="flex items-center space-x-1.5">
+                          <span className="text-xs font-black">{contactedCount}</span>
+                          <span className="text-[9px] font-bold opacity-80">({getPercentage(contactedCount, totalLeads)})</span>
+                        </div>
+                      </div>
+
+                      {/* Arrow */}
+                      <div className="flex justify-center -my-1">
+                        <div className="w-2.5 h-2.5 bg-slate-100 border-r border-b border-slate-200 rotate-45"></div>
+                      </div>
+
+                      {/* Funnel Stage 4: Qualified */}
+                      <div 
+                        onClick={() => navigate('/contact-directory?status=QUALIFIED')}
+                        className="w-[85%] mx-auto bg-purple-500 hover:bg-purple-600 text-white rounded-xl p-2.5 flex items-center justify-between cursor-pointer transition-transform hover:scale-[1.01]"
+                      >
+                        <span className="text-[10px] font-black uppercase tracking-wider">4. Qualified</span>
+                        <div className="flex items-center space-x-1.5">
+                          <span className="text-xs font-black">{qualifiedCount}</span>
+                          <span className="text-[9px] font-bold opacity-80">({getPercentage(qualifiedCount, totalLeads)})</span>
+                        </div>
+                      </div>
+
+                      {/* Arrow */}
+                      <div className="flex justify-center -my-1">
+                        <div className="w-2.5 h-2.5 bg-slate-100 border-r border-b border-slate-200 rotate-45"></div>
+                      </div>
+
+                      {/* Funnel Stage 5: Proposal */}
+                      <div 
+                        onClick={() => navigate('/contact-directory?status=PROPOSAL')}
+                        className="w-[80%] mx-auto bg-orange-500 hover:bg-orange-600 text-white rounded-xl p-2.5 flex items-center justify-between cursor-pointer transition-transform hover:scale-[1.01]"
+                      >
+                        <span className="text-[10px] font-black uppercase tracking-wider">5. Proposal</span>
+                        <div className="flex items-center space-x-1.5">
+                          <span className="text-xs font-black">{proposalCount}</span>
+                          <span className="text-[9px] font-bold opacity-80">({getPercentage(proposalCount, totalLeads)})</span>
+                        </div>
+                      </div>
+
+                      {/* Arrow */}
+                      <div className="flex justify-center -my-1">
+                        <div className="w-2.5 h-2.5 bg-slate-100 border-r border-b border-slate-200 rotate-45"></div>
+                      </div>
+
+                      {/* Funnel Stage 6: Won */}
+                      <div 
+                        onClick={() => navigate('/contact-directory?status=WON')}
+                        className="w-[75%] mx-auto bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl p-2.5 flex items-center justify-between cursor-pointer transition-transform hover:scale-[1.01]"
+                      >
+                        <span className="text-[10px] font-black uppercase tracking-wider">6. Won</span>
+                        <div className="flex items-center space-x-1.5">
+                          <span className="text-xs font-black">{wonCount}</span>
+                          <span className="text-[9px] font-bold opacity-80">({getPercentage(wonCount, totalLeads)})</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Overall Conversion</span>
+                    <span className="px-2.5 py-1 bg-emerald-500/10 text-emerald-600 rounded-lg text-xs font-black">
+                      {getPercentage(wonCount, totalLeads)} Won
+                    </span>
+                  </div>
+                </div>
+
+                {/* Lead Ownership Center Segment (lg:col-span-3) */}
+                <div className="lg:col-span-3 bg-white p-5 rounded-2xl border border-slate-200/80 flex flex-col justify-between">
+                  <div>
+                    <h3 className="text-xs font-black text-slate-800 uppercase tracking-widest mb-4">
+                      Lead Assignment
+                    </h3>
+                    
+                    {/* SVG Circular Donut Chart */}
+                    <div className="relative flex items-center justify-center py-4">
+                      <svg viewBox="0 0 36 36" className="w-28 h-28 transform -rotate-90">
+                        {/* Background track */}
+                        <circle cx="18" cy="18" r="15.9155" fill="none" stroke="#f1f5f9" strokeWidth="4" />
+                        {/* Assigned Segment */}
+                        <circle 
+                          cx="18" 
+                          cy="18" 
+                          r="15.9155" 
+                          fill="none" 
+                          stroke="#2563eb" 
+                          strokeWidth="4"
+                          strokeDasharray={`${assignedPercent} ${100 - assignedPercent}`} 
+                        />
+                      </svg>
+                      <div className="absolute text-center">
+                        <span className="text-xl font-black text-slate-800">{assignedPercent.toFixed(1)}%</span>
+                        <p className="text-[8px] font-extrabold text-slate-400 uppercase tracking-wider">Assigned</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <button 
+                      onClick={() => navigate('/contact-directory?assigned=true')}
+                      className="w-full p-2.5 bg-blue-50/50 hover:bg-blue-50 border border-blue-100/50 rounded-xl flex items-center justify-between cursor-pointer transition-colors"
+                    >
+                      <div className="flex items-center space-x-2">
+                        <span className="w-2 h-2 rounded-full bg-blue-500"></span>
+                        <span className="text-[10px] font-bold text-slate-600">Assigned Leads</span>
+                      </div>
+                      <span className="text-xs font-black text-blue-600">{assignedCount}</span>
+                    </button>
+
+                    <button 
+                      onClick={() => navigate('/contact-directory?unassigned=true')}
+                      className="w-full p-2.5 bg-amber-50/50 hover:bg-amber-50 border border-amber-100/50 rounded-xl flex items-center justify-between cursor-pointer transition-colors"
+                    >
+                      <div className="flex items-center space-x-2">
+                        <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                        <span className="text-[10px] font-bold text-slate-600">Unassigned Leads</span>
+                      </div>
+                      <span className="text-xs font-black text-amber-600">{unassignedCount}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Salesperson Workload (lg:col-span-5) */}
+                <div className="lg:col-span-5 bg-white p-5 rounded-2xl border border-slate-200/80 flex flex-col justify-between">
+                  <div>
+                    <h3 className="text-xs font-black text-slate-800 uppercase tracking-widest mb-3">
+                      Salesperson Workload & Productivity
+                    </h3>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-[11px] border-collapse">
+                        <thead>
+                          <tr className="border-b border-slate-100 text-slate-400 uppercase tracking-wider font-extrabold text-[8px]">
+                            <th className="pb-2">Salesperson</th>
+                            <th className="pb-2 text-right">Assigned</th>
+                            <th className="pb-2 text-right">Contacted</th>
+                            <th className="pb-2 text-right text-emerald-600">Won</th>
+                            <th className="pb-2 text-right">Due</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-50 text-slate-700 font-semibold">
+                          {salespersonMetrics.length === 0 ? (
+                            <tr>
+                              <td colSpan={5} className="py-4 text-center text-slate-400 text-[10px]">
+                                No salesperson records found.
+                              </td>
+                            </tr>
+                          ) : (
+                            salespersonMetrics.slice(0, 5).map(m => (
+                              <tr key={m.user.uid} className="hover:bg-slate-50/30 transition-colors">
+                                <td className="py-2.5 flex items-center space-x-1.5">
+                                  <span className="w-5 h-5 rounded-full bg-slate-100 flex items-center justify-center font-bold text-[9px] text-slate-600">
+                                    {m.user.name?.charAt(0) || m.user.email?.charAt(0) || 'U'}
+                                  </span>
+                                  <span className="text-slate-800 line-clamp-1 max-w-[100px]" title={m.user.name || m.user.email}>
+                                    {m.user.name || m.user.email}
+                                  </span>
+                                </td>
+                                <td className="py-2.5 text-right font-black">{m.assignedLeads}</td>
+                                <td className="py-2.5 text-right">{m.contactedLeads}</td>
+                                <td className="py-2.5 text-right font-bold text-emerald-600">{m.wonDeals}</td>
+                                <td className="py-2.5 text-right text-purple-600">{m.followUpsDue}</td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <div className="pt-2 border-t border-slate-100 flex justify-end">
+                    <button 
+                      onClick={() => navigate('/contact-directory')}
+                      className="text-[10px] font-bold text-blue-600 hover:text-blue-700 hover:underline flex items-center space-x-1"
+                    >
+                      <span>View complete lead hierarchy</span>
+                      <span>&rarr;</span>
+                    </button>
+                  </div>
                 </div>
               </div>
-            );
-          })}
-        </div>
+
+              {/* Row 3: Detail Distributions */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {/* Status Bar Meters */}
+                <div className="bg-white p-5 rounded-2xl border border-slate-200/80">
+                  <h3 className="text-xs font-black text-slate-800 uppercase tracking-widest mb-4">
+                    Lead Status Distribution
+                  </h3>
+                  <div className="space-y-3.5">
+                    {[
+                      { label: 'New Leads', count: newLeadsCount, color: 'bg-blue-500' },
+                      { label: 'Contacted', count: contactedCount, color: 'bg-sky-400' },
+                      { label: 'Qualified', count: qualifiedCount, color: 'bg-purple-500' },
+                      { label: 'Proposal', count: proposalCount, color: 'bg-orange-400' },
+                      { label: 'Won Leads', count: wonCount, color: 'bg-emerald-500' },
+                      { label: 'Lost Leads', count: lostCount, color: 'bg-rose-500' }
+                    ].map(status => {
+                      const pct = totalDatabase > 0 ? (status.count / totalDatabase) * 100 : 0;
+                      return (
+                        <div key={status.label} className="space-y-1">
+                          <div className="flex justify-between text-[10px] font-bold text-slate-600">
+                            <span>{status.label}</span>
+                            <span>{status.count} ({pct.toFixed(1)}%)</span>
+                          </div>
+                          <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+                            <div className={`h-full ${status.color}`} style={{ width: `${pct}%` }}></div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Lead Health Indicators */}
+                <div className="bg-white p-5 rounded-2xl border border-slate-200/80">
+                  <h3 className="text-xs font-black text-slate-800 uppercase tracking-widest mb-4">
+                    Lead Health Overview
+                  </h3>
+                  <div className="space-y-2">
+                    {[
+                      { label: 'Healthy Leads', count: healthyCount, desc: 'Active communication established', color: 'text-emerald-600 bg-emerald-50 border-emerald-100', onClick: () => navigate('/contact-directory?health=HEALTHY') },
+                      { label: 'Needs Attention', count: attentionCount, desc: 'Pending verification / action', color: 'text-amber-600 bg-amber-50 border-amber-100', onClick: () => navigate('/contact-directory?health=NEEDS%20ATTENTION') },
+                      { label: 'At Risk / Stale', count: staleCount, desc: 'No communication in 14+ days', color: 'text-rose-600 bg-rose-50 border-rose-100', onClick: () => navigate('/contact-directory?health=AT%20RISK') },
+                      { label: 'Hot Priority Leads', count: hotCount, desc: 'Highly interested prospects', color: 'text-orange-600 bg-orange-50 border-orange-100', onClick: () => navigate('/contact-directory?temp=HOT') },
+                      { label: 'Stuck Stages', count: stuckCount, desc: 'Unchanged pipeline stage for 14d+', color: 'text-purple-600 bg-purple-50 border-purple-100', onClick: () => navigate('/contact-directory?stuck=true') }
+                    ].map(health => (
+                      <button
+                        key={health.label}
+                        onClick={health.onClick}
+                        className={`w-full p-2.5 rounded-xl border ${health.color} text-left flex items-center justify-between cursor-pointer hover:scale-[1.01] transition-transform`}
+                      >
+                        <div>
+                          <span className="text-[10px] font-black uppercase tracking-wider">{health.label}</span>
+                          <p className="text-[9px] font-medium opacity-80 leading-none mt-0.5">{health.desc}</p>
+                        </div>
+                        <span className="text-sm font-black">{health.count}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Today's Actions & Month Activities */}
+                <div className="bg-white p-5 rounded-2xl border border-slate-200/80 flex flex-col justify-between">
+                  <div>
+                    <h3 className="text-xs font-black text-slate-800 uppercase tracking-widest mb-3">
+                      Today's Follow-up Activity
+                    </h3>
+                    <div className="grid grid-cols-2 gap-2 mb-4">
+                      <button 
+                        onClick={() => navigate('/contact-directory?filter=today')}
+                        className="p-3 bg-slate-50 border border-slate-150 rounded-xl text-left cursor-pointer hover:bg-slate-100 transition-colors"
+                      >
+                        <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Due Today</span>
+                        <span className="block text-base font-black text-slate-800 mt-1">{followUpsDueCount}</span>
+                      </button>
+                      <button 
+                        onClick={() => navigate('/contact-directory?filter=overdue')}
+                        className="p-3 bg-red-50 border border-red-100 rounded-xl text-left cursor-pointer hover:bg-red-100/50 transition-colors"
+                      >
+                        <span className="text-[9px] font-bold text-red-500 uppercase tracking-wider">Overdue</span>
+                        <span className="block text-base font-black text-red-600 mt-1">{overdueCount}</span>
+                      </button>
+                    </div>
+
+                    <h3 className="text-xs font-black text-slate-800 uppercase tracking-widest mb-2.5">
+                      Completed Actions (This Month)
+                    </h3>
+                    <div className="space-y-1.5 text-[10px] font-semibold text-slate-600">
+                      <div className="flex justify-between items-center py-1 border-b border-slate-50">
+                        <span className="flex items-center space-x-1.5 text-slate-500">
+                          <Phone className="w-3.5 h-3.5" />
+                          <span>Calls Placed</span>
+                        </span>
+                        <span className="font-bold text-slate-800">{callsCount}</span>
+                      </div>
+                      <div className="flex justify-between items-center py-1 border-b border-slate-50">
+                        <span className="flex items-center space-x-1.5 text-slate-500">
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          <span>WhatsApp Follow-ups</span>
+                        </span>
+                        <span className="font-bold text-slate-800">{whatsappCount}</span>
+                      </div>
+                      <div className="flex justify-between items-center py-1 border-b border-slate-50">
+                        <span className="flex items-center space-x-1.5 text-slate-500">
+                          <Clock className="w-3.5 h-3.5" />
+                          <span>Emails Sent</span>
+                        </span>
+                        <span className="font-bold text-slate-800">{emailCount}</span>
+                      </div>
+                      <div className="flex justify-between items-center pt-1.5 text-slate-800 font-bold">
+                        <span>Total Monthly Logged Actions</span>
+                        <span className="text-xs font-black text-blue-600">{totalActivitiesCount}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Row 4: Pipeline Attention & Action Alerts */}
+              <div className="bg-amber-50/20 border border-amber-200/80 rounded-2xl p-4">
+                <h3 className="text-xs font-black text-amber-800 uppercase tracking-widest mb-3 flex items-center space-x-1.5">
+                  <span className="text-amber-500 font-extrabold text-sm">⚠</span>
+                  <span>Pipeline Attention Alerts</span>
+                </h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                  {[
+                    {
+                      condition: unassignedCount > 0,
+                      label: `${unassignedCount} Leads Unassigned`,
+                      desc: 'Assign sales representatives',
+                      onClick: () => navigate('/contact-directory?unassigned=true'),
+                      color: 'bg-amber-50/70 border-amber-200/70 text-amber-800 hover:bg-amber-100/50'
+                    },
+                    {
+                      condition: noFollowUpCount > 0,
+                      label: `${noFollowUpCount} Missing Follow-ups`,
+                      desc: 'Schedule next contact date',
+                      onClick: () => navigate('/contact-directory?noFollowUp=true'),
+                      color: 'bg-amber-50/70 border-amber-200/70 text-amber-800 hover:bg-amber-100/50'
+                    },
+                    {
+                      condition: overdueCount > 0,
+                      label: `${overdueCount} Overdue Follow-ups`,
+                      desc: 'Urgent callbacks required',
+                      onClick: () => navigate('/contact-directory?filter=overdue'),
+                      color: 'bg-red-50/70 border-red-200/70 text-red-800 hover:bg-red-100/50'
+                    },
+                    {
+                      condition: qualifiedCount === 0,
+                      label: 'No Leads Qualified',
+                      desc: 'Establish pipeline velocity',
+                      onClick: () => navigate('/contact-directory?status=QUALIFIED'),
+                      color: 'bg-indigo-50/70 border-indigo-200/70 text-indigo-800 hover:bg-indigo-100/50'
+                    },
+                    {
+                      condition: proposalCount > 0,
+                      label: `${proposalCount} Proposals Awaiting`,
+                      desc: 'Follow-up on open proposals',
+                      onClick: () => navigate('/contact-directory?status=PROPOSAL'),
+                      color: 'bg-blue-50/70 border-blue-200/70 text-blue-800 hover:bg-blue-100/50'
+                    }
+                  ].map((alert, idx) => {
+                    if (!alert.condition) return null;
+                    return (
+                      <button
+                        key={idx}
+                        onClick={alert.onClick}
+                        className={`p-3 rounded-xl border text-left cursor-pointer transition-transform hover:scale-[1.01] flex flex-col justify-between ${alert.color}`}
+                      >
+                        <span className="text-[10px] font-black uppercase tracking-wider">{alert.label}</span>
+                        <span className="text-[9px] font-semibold opacity-75 mt-0.5 leading-none">{alert.desc}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          );
+        })()
       ) : (
         /* DIRECTORY TABLE VIEW */
         <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
+          {/* Sub-view Switcher inside Directory */}
+          <div className="px-5 py-3.5 border-b border-slate-200 bg-slate-50/60 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="flex items-center space-x-2">
+              <span className="text-xs font-bold text-slate-700">Directory Mode:</span>
+              <div className="flex bg-slate-200/60 p-0.5 rounded-lg border border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setListStyle('crm');
+                    navigate('/contact-directory?style=crm');
+                  }}
+                  className={`px-3 py-1.5 rounded-md text-[11px] font-bold transition-all cursor-pointer ${
+                    listStyle === 'crm'
+                      ? 'bg-white text-blue-700 shadow-2xs'
+                      : 'text-slate-500 hover:text-slate-850'
+                  }`}
+                >
+                  Intel & Follow-ups
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setListStyle('master');
+                    navigate('/contact-directory?style=master');
+                  }}
+                  className={`px-3 py-1.5 rounded-md text-[11px] font-bold transition-all cursor-pointer ${
+                    listStyle === 'master'
+                      ? 'bg-white text-blue-700 shadow-2xs'
+                      : 'text-slate-500 hover:text-slate-850'
+                  }`}
+                >
+                  🗂️ Lead Data Master
+                </button>
+              </div>
+            </div>
+            <div className="text-[11px] text-slate-500 font-semibold">
+              {listStyle === 'crm' 
+                ? 'Displaying pipeline statuses, dynamic health tags, communication logs, and active follow-up actions.' 
+                : 'Displaying exact tabular form with separate columns for Company, Contact Person, Mobile, Email, City, and Industry.'}
+            </div>
+          </div>
+
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase tracking-wider">
-                <tr>
-                  <th className="px-3 py-3.5 w-10 text-center">
-                    <button
-                      type="button"
-                      onClick={toggleSelectAll}
-                      className="text-slate-400 hover:text-blue-600 transition-colors"
-                      title={selectedIds.length === filteredBusinesses.length && filteredBusinesses.length > 0 ? 'Deselect all' : 'Select all'}
-                    >
-                      {selectedIds.length === filteredBusinesses.length && filteredBusinesses.length > 0 ? (
-                        <CheckSquare className="w-4 h-4 text-blue-600 fill-blue-50" />
-                      ) : (
-                        <Square className="w-4 h-4" />
-                      )}
-                    </button>
-                  </th>
-                  <th className="px-4 py-3.5">Company / City</th>
-                  <th className="px-4 py-3.5">Contact Person</th>
-                  <th className="px-4 py-3.5">Status & Temp</th>
-                  <th className="px-4 py-3.5">Health & Age</th>
-                  <th className="px-4 py-3.5">Quick Actions</th>
-                  <th className="px-4 py-3.5">Assigned To</th>
-                  <th className="px-4 py-3.5">Next Follow-Up</th>
-                  <th className="px-4 py-3.5 text-right">Actions</th>
-                </tr>
+                {listStyle === 'crm' ? (
+                  <tr>
+                    <th className="px-3 py-3.5 w-10 text-center">
+                      <button
+                        type="button"
+                        onClick={toggleSelectAll}
+                        className="text-slate-400 hover:text-blue-600 transition-colors cursor-pointer"
+                        title={selectedIds.length === filteredBusinesses.length && filteredBusinesses.length > 0 ? 'Deselect all' : 'Select all'}
+                      >
+                        {selectedIds.length === filteredBusinesses.length && filteredBusinesses.length > 0 ? (
+                          <CheckSquare className="w-4 h-4 text-blue-600 fill-blue-50" />
+                        ) : (
+                          <Square className="w-4 h-4" />
+                        )}
+                      </button>
+                    </th>
+                    <th className="px-4 py-3.5">Company / City</th>
+                    <th className="px-4 py-3.5">Contact Person</th>
+                    <th className="px-4 py-3.5">Status & Temp</th>
+                    <th className="px-4 py-3.5">Health & Age</th>
+                    <th className="px-4 py-3.5">Quick Actions</th>
+                    <th className="px-4 py-3.5">Assigned To</th>
+                    <th className="px-4 py-3.5">Next Follow-Up</th>
+                    <th className="px-4 py-3.5 text-right">Actions</th>
+                  </tr>
+                ) : (
+                  <tr>
+                    <th className="px-3 py-3.5 w-10 text-center">
+                      <button
+                        type="button"
+                        onClick={toggleSelectAll}
+                        className="text-slate-400 hover:text-blue-600 transition-colors cursor-pointer"
+                        title={selectedIds.length === filteredBusinesses.length && filteredBusinesses.length > 0 ? 'Deselect all' : 'Select all'}
+                      >
+                        {selectedIds.length === filteredBusinesses.length && filteredBusinesses.length > 0 ? (
+                          <CheckSquare className="w-4 h-4 text-blue-600 fill-blue-50" />
+                        ) : (
+                          <Square className="w-4 h-4" />
+                        )}
+                      </button>
+                    </th>
+                    <th className="px-4 py-3.5">Company Name</th>
+                    <th className="px-4 py-3.5">Contact Person</th>
+                    <th className="px-4 py-3.5">Mobile</th>
+                    <th className="px-4 py-3.5">Email</th>
+                    <th className="px-4 py-3.5">City</th>
+                    <th className="px-4 py-3.5">Industry</th>
+                    <th className="px-4 py-3.5 text-right">Actions</th>
+                  </tr>
+                )}
               </thead>
               <tbody className="divide-y divide-slate-100 text-slate-700 font-medium">
                 {filteredBusinesses.map((biz) => (
@@ -1193,7 +1914,7 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
                       <button
                         type="button"
                         onClick={() => biz.id && toggleSelectOne(biz.id)}
-                        className="text-slate-400 hover:text-blue-600 transition-colors"
+                        className="text-slate-400 hover:text-blue-600 transition-colors cursor-pointer"
                       >
                         {biz.id && selectedIds.includes(biz.id) ? (
                           <CheckSquare className="w-4 h-4 text-blue-600 fill-blue-50" />
@@ -1202,149 +1923,202 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
                         )}
                       </button>
                     </td>
-                    <td className="px-4 py-3.5">
-                      <p className="font-bold text-slate-900">{biz.companyName}</p>
-                      <p className="text-[11px] text-slate-500 flex items-center mt-0.5">
-                        {biz.city ? `${biz.city} • ` : ''}{biz.industry || 'General'}
-                      </p>
-                      {biz.dealValue !== undefined && biz.dealValue !== null && biz.dealValue !== 0 && (
-                        <div className="mt-1 flex items-center text-[10px] text-emerald-700 font-extrabold bg-emerald-50 px-1.5 py-0.5 rounded w-fit border border-emerald-100">
-                          <span>₹{biz.dealValue.toLocaleString('en-IN')}</span>
-                          {biz.expectedClosureDate && (
-                            <span className="text-slate-400 font-normal ml-2">Exp: {biz.expectedClosureDate}</span>
-                          )}
-                        </div>
-                      )}
-                      {/* Tags list inside Company column */}
-                      {biz.tags && biz.tags.length > 0 && (
-                        <div className="flex flex-wrap gap-1 mt-1.5">
-                          {biz.tags.map(tag => (
-                            <span key={tag} className="px-1 py-0.5 bg-slate-100 text-slate-600 border border-slate-200 rounded text-[9px] font-bold">
-                              #{tag}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-5 py-3.5">
-                      <p className="text-slate-800 font-medium">{biz.contactPerson || '-'}</p>
-                      <p className="text-[11px] font-mono text-slate-500 mt-0.5">{biz.mobile || biz.email || '-'}</p>
-                    </td>
-                    <td className="px-5 py-3.5">
-                      <div className="flex items-center space-x-1.5">
-                        <select
-                           value={(biz.status || 'NEW').toUpperCase()}
-                          onChange={(e) => biz.id && handleUpdateStage(biz.id, e.target.value as BusinessStatus)}
-                          className="px-2 py-0.5 text-[10px] font-extrabold rounded-md border bg-white focus:outline-none"
-                        >
-                          {PIPELINE_STAGES.map(s => (
-                            <option key={s.key} value={s.key}>{s.label}</option>
-                          ))}
-                        </select>
-                        {biz.temperature && (
-                          <span
-                            className={`px-1.5 py-0.5 text-[10px] font-bold rounded ${
-                              biz.temperature === 'HOT'
-                                ? 'bg-rose-100 text-rose-800'
-                                : biz.temperature === 'WARM'
-                                ? 'bg-amber-100 text-amber-800'
-                                : 'bg-blue-100 text-blue-800'
-                            }`}
-                          >
-                            {biz.temperature === 'HOT' ? '🔥 HOT' : biz.temperature === 'WARM' ? '☀️ WARM' : '❄️ COLD'}
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-5 py-3.5">
-                      {(() => {
-                        const h = calculateLeadHealth(biz, allActivities);
-                        const vel = calculateLeadVelocity(biz, allActivities);
-                        return (
-                          <div className="space-y-1">
-                            <div>
-                              {h === 'HEALTHY' ? (
-                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                                  🟢 HEALTHY
-                                </span>
-                              ) : h === 'NEEDS ATTENTION' ? (
-                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-50 text-amber-700 border border-amber-200">
-                                  🟡 ATTENTION
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-50 text-rose-700 border border-rose-200">
-                                  🔴 AT RISK
-                                </span>
+
+                    {listStyle === 'crm' ? (
+                      <>
+                        <td className="px-4 py-3.5">
+                          <p className="font-bold text-slate-900">{biz.companyName}</p>
+                          <p className="text-[11px] text-slate-500 flex items-center mt-0.5">
+                            {biz.city ? `${biz.city} • ` : ''}{biz.industry || 'General'}
+                          </p>
+                          {biz.dealValue !== undefined && biz.dealValue !== null && biz.dealValue !== 0 && (
+                            <div className="mt-1 flex items-center text-[10px] text-emerald-700 font-extrabold bg-emerald-50 px-1.5 py-0.5 rounded w-fit border border-emerald-100">
+                              <span>₹{biz.dealValue.toLocaleString('en-IN')}</span>
+                              {biz.expectedClosureDate && (
+                                <span className="text-slate-400 font-normal ml-2">Exp: {biz.expectedClosureDate}</span>
                               )}
                             </div>
-                            <p className="text-[10px] text-slate-500 font-semibold">
-                              Age: {vel.totalAgeDays}d • Stage: {vel.daysInCurrentStage}d
-                            </p>
+                          )}
+                          {biz.tags && biz.tags.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-1.5">
+                              {biz.tags.map(tag => (
+                                <span key={tag} className="px-1 py-0.5 bg-slate-100 text-slate-600 border border-slate-200 rounded text-[9px] font-bold">
+                                  #{tag}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-5 py-3.5">
+                          <p className="text-slate-800 font-medium">{biz.contactPerson || '-'}</p>
+                          <p className="text-[11px] font-mono text-slate-500 mt-0.5">{biz.mobile || biz.email || '-'}</p>
+                        </td>
+                        <td className="px-5 py-3.5">
+                          <div className="flex items-center space-x-1.5">
+                            <select
+                               value={(biz.status || 'NEW').toUpperCase()}
+                              onChange={(e) => biz.id && handleUpdateStage(biz.id, e.target.value as BusinessStatus)}
+                              className="px-2 py-0.5 text-[10px] font-extrabold rounded-md border bg-white focus:outline-none"
+                            >
+                              {PIPELINE_STAGES.map(s => (
+                                <option key={s.key} value={s.key}>{s.label}</option>
+                              ))}
+                            </select>
+                            {biz.temperature && (
+                              <span
+                                className={`px-1.5 py-0.5 text-[10px] font-bold rounded ${
+                                  biz.temperature === 'HOT'
+                                    ? 'bg-rose-100 text-rose-800'
+                                    : biz.temperature === 'WARM'
+                                    ? 'bg-amber-100 text-amber-800'
+                                    : 'bg-blue-100 text-blue-800'
+                                }`}
+                              >
+                                {biz.temperature === 'HOT' ? '🔥 HOT' : biz.temperature === 'WARM' ? '☀️ WARM' : '❄️ COLD'}
+                              </span>
+                            )}
                           </div>
-                        );
-                      })()}
-                    </td>
-                    <td className="px-5 py-3.5">
-                      <CommunicationQuickActions
-                        mobile={biz.mobile}
-                        email={biz.email}
-                        contactPerson={biz.contactPerson}
-                        companyName={biz.companyName}
-                        onLogActivity={() => setActivityTargetBiz(biz)}
-                        size="sm"
-                      />
-                    </td>
-                    <td className="px-5 py-3.5 text-[11px]">
-                      {biz.assignedTelecaller || biz.assignedSalesperson ? (
-                        <div>
-                          {biz.assignedTelecaller && (
-                            <p className="text-slate-700 font-medium">📞 {biz.assignedTelecaller}</p>
+                        </td>
+                        <td className="px-5 py-3.5">
+                          {(() => {
+                            const cached = biz.id ? leadHealthAndVelocityMap.get(biz.id) : null;
+                            const h = cached ? cached.health : 'HEALTHY';
+                            const vel = cached ? cached.velocity : { totalAgeDays: 0, daysInCurrentStage: 0 };
+                            return (
+                              <div className="space-y-1">
+                                <div>
+                                  {h === 'HEALTHY' ? (
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                      🟢 HEALTHY
+                                    </span>
+                                  ) : h === 'NEEDS ATTENTION' ? (
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-50 text-amber-700 border border-amber-200">
+                                      🟡 ATTENTION
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-50 text-rose-700 border border-rose-200">
+                                      🔴 AT RISK
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-[10px] text-slate-500 font-semibold">
+                                  Age: {vel.totalAgeDays}d • Stage: {vel.daysInCurrentStage}d
+                                </p>
+                              </div>
+                            );
+                          })()}
+                        </td>
+                        <td className="px-5 py-3.5">
+                          <CommunicationQuickActions
+                            mobile={biz.mobile}
+                            email={biz.email}
+                            contactPerson={biz.contactPerson}
+                            companyName={biz.companyName}
+                            onLogActivity={() => setActivityTargetBiz(biz)}
+                            size="sm"
+                          />
+                        </td>
+                        <td className="px-5 py-3.5 text-[11px]">
+                          {biz.assignedTelecaller || biz.assignedSalesperson ? (
+                            <div>
+                              {biz.assignedTelecaller && (
+                                <p className="text-slate-700 font-medium">📞 {biz.assignedTelecaller}</p>
+                              )}
+                              {biz.assignedSalesperson && (
+                                <p className="text-slate-700 font-medium">💼 {biz.assignedSalesperson}</p>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-slate-400 italic">Unassigned</span>
                           )}
-                          {biz.assignedSalesperson && (
-                            <p className="text-slate-700 font-medium">💼 {biz.assignedSalesperson}</p>
+                        </td>
+                        <td className="px-5 py-3.5">
+                          {biz.nextFollowUpDate ? (
+                            <div>
+                              <p className="font-mono text-[11px] font-bold text-slate-800 flex items-center">
+                                <Clock className="w-3 h-3 mr-1 text-slate-400" />
+                                {biz.nextFollowUpDate}
+                              </p>
+                              {biz.nextAction && (
+                                <p className="text-[10px] text-slate-500 truncate max-w-[120px]" title={biz.nextAction}>
+                                  {biz.nextAction}
+                                </p>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-slate-400 text-[11px]">-</span>
                           )}
-                        </div>
-                      ) : (
-                        <span className="text-slate-400 italic">Unassigned</span>
-                      )}
-                    </td>
-                    <td className="px-5 py-3.5">
-                      {biz.nextFollowUpDate ? (
-                        <div>
-                          <p className="font-mono text-[11px] font-bold text-slate-800 flex items-center">
-                            <Clock className="w-3 h-3 mr-1 text-slate-400" />
-                            {biz.nextFollowUpDate}
-                          </p>
-                          {biz.nextAction && (
-                            <p className="text-[10px] text-slate-500 truncate max-w-[120px]" title={biz.nextAction}>
-                              {biz.nextAction}
-                            </p>
+                        </td>
+                      </>
+                    ) : (
+                      <>
+                        <td className="px-4 py-3.5">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenView(biz)}
+                            className="font-bold text-slate-900 hover:text-blue-600 hover:underline transition-colors text-left text-xs cursor-pointer"
+                          >
+                            {biz.companyName}
+                          </button>
+                        </td>
+                        <td className="px-4 py-3.5 text-slate-800 text-xs font-semibold">
+                          {biz.contactPerson || <span className="text-slate-400 italic font-normal">-</span>}
+                        </td>
+                        <td className="px-4 py-3.5 text-xs font-mono text-slate-600">
+                          {biz.mobile ? (
+                            <a href={`tel:${biz.mobile}`} className="hover:text-blue-600 hover:underline flex items-center">
+                              <Phone className="w-3.5 h-3.5 text-slate-400 mr-1.5 shrink-0" />
+                              <span>{biz.mobile}</span>
+                            </a>
+                          ) : (
+                            <span className="text-slate-400 italic font-normal">-</span>
                           )}
-                        </div>
-                      ) : (
-                        <span className="text-slate-400 text-[11px]">-</span>
-                      )}
-                    </td>
+                        </td>
+                        <td className="px-4 py-3.5 text-xs text-slate-600">
+                          {biz.email ? (
+                            <a href={`mailto:${biz.email}`} className="hover:text-blue-600 hover:underline flex items-center">
+                              <MailIcon className="w-3.5 h-3.5 text-slate-400 mr-1.5 shrink-0" />
+                              <span className="truncate max-w-[150px]" title={biz.email}>{biz.email}</span>
+                            </a>
+                          ) : (
+                            <span className="text-slate-400 italic font-normal">-</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3.5 text-slate-800 text-xs">
+                          {biz.city || <span className="text-slate-400 italic font-normal">-</span>}
+                        </td>
+                        <td className="px-4 py-3.5 text-xs">
+                          {biz.industry ? (
+                            <span className="px-2 py-0.5 bg-slate-100 text-slate-700 rounded-md border border-slate-200 font-bold text-[10px]">
+                              {biz.industry}
+                            </span>
+                          ) : (
+                            <span className="text-slate-400 italic font-normal">-</span>
+                          )}
+                        </td>
+                      </>
+                    )}
+
                     <td className="px-5 py-3.5 text-right">
                       <div className="flex items-center justify-end space-x-2">
                         <button
                           onClick={() => handleOpenView(biz)}
                           title="View Detail"
-                          className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                          className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
                         >
                           <Eye className="w-4 h-4" />
                         </button>
                         <button
                           onClick={() => handleOpenEdit(biz)}
                           title="Edit"
-                          className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
+                          className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
                         >
                           <Edit3 className="w-4 h-4" />
                         </button>
                         <button
                           onClick={() => handleOpenDelete(biz)}
                           title="Delete"
-                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -2007,6 +2781,17 @@ export const Businesses: React.FC<BusinessesProps> = ({ user }) => {
         title="Delete Business"
         message={`Are you sure you want to delete ${selectedBusiness?.companyName || 'this business'}? This action cannot be undone.`}
         confirmText="Delete"
+        isLoading={saving}
+      />
+
+      {/* BULK DELETE CONFIRMATION MODAL */}
+      <ConfirmModal
+        isOpen={isBulkDeleteModalOpen}
+        onClose={() => setIsBulkDeleteModalOpen(false)}
+        onConfirm={handleBulkDeleteConfirm}
+        title="Delete Multiple Businesses"
+        message={`Are you sure you want to delete the ${selectedIds.length} selected business record(s)? This action cannot be undone.`}
+        confirmText="Delete Selected"
         isLoading={saving}
       />
 

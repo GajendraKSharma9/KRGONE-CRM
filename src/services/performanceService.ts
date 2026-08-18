@@ -444,6 +444,99 @@ export const performanceService = {
     return newEntry;
   },
 
+  async saveBulkAchievements(
+    organizationId: string,
+    periodMonth: string,
+    achievementsList: { salespersonUid: string; salespersonName: string; kpiId: string; kpiName: string; value: number }[]
+  ): Promise<AchievementEntry[]> {
+    // 1. Fetch current achievements list
+    const currentList = await this.getAchievements(organizationId);
+    
+    // Filter only those in the same period month (first 7 chars match YYYY-MM)
+    const existingPeriodLogs = currentList.filter(a =>
+      a.organizationId === organizationId &&
+      (a.date || '').substring(0, 7) === periodMonth
+    );
+
+    const idsToDelete: string[] = [];
+    const newSavedEntries: AchievementEntry[] = [];
+
+    // Loop through requested spreadsheet matrix changes
+    for (const item of achievementsList) {
+      // Find any existing manual logs for this user, KPI in this month
+      const spKpiLogs = existingPeriodLogs.filter(a =>
+        a.salespersonUid === item.salespersonUid &&
+        a.kpiId === item.kpiId
+      );
+
+      const existingSum = spKpiLogs.reduce((acc, curr) => acc + (curr.value || 0), 0);
+
+      // If typed matrix value is different from current sum
+      if (item.value !== existingSum) {
+        // Queue old entries for replacement
+        spKpiLogs.forEach(log => {
+          if (log.id) idsToDelete.push(log.id);
+        });
+
+        // Insert new consolidated actual entry if > 0
+        if (item.value > 0) {
+          const id = `ach_${item.salespersonUid}_${item.kpiId}_${periodMonth.replace('-', '_')}`;
+          const now = new Date().toISOString();
+          const todayStr = now.split('T')[0];
+          const dateToUse = todayStr.substring(0, 7) === periodMonth ? todayStr : `${periodMonth}-01`;
+
+          const payload = {
+            organizationId,
+            salespersonUid: item.salespersonUid,
+            salespersonName: item.salespersonName,
+            kpiId: item.kpiId,
+            kpiName: item.kpiName,
+            value: item.value,
+            date: dateToUse,
+            customerClient: 'Bulk Matrix Entry',
+            product: '',
+            supportingReference: '',
+            notes: `Saved via spreadsheet entry for ${periodMonth}`,
+            createdAt: now
+          };
+
+          try {
+            await setDoc(doc(db, ACHIEVEMENTS_COL, id), payload);
+          } catch (e) {
+            console.warn(`Firestore saveBulkAchievements setDoc failed:`, e);
+          }
+
+          newSavedEntries.push({ id, ...payload });
+        }
+      } else {
+        // Keep existing entries as-is
+        newSavedEntries.push(...spKpiLogs);
+      }
+    }
+
+    // Process actual database deletions
+    for (const delId of idsToDelete) {
+      try {
+        await deleteDoc(doc(db, ACHIEVEMENTS_COL, delId));
+      } catch (e) {
+        console.warn(`Firestore saveBulkAchievements deleteDoc failed:`, e);
+      }
+    }
+
+    // Refresh local storage array of all achievements
+    const allList = getLocalItems<AchievementEntry>(LOCAL_ACHIEVEMENTS_KEY);
+    // Remove deleted ones
+    let updatedLocal = allList.filter(a => !idsToDelete.includes(a.id || ''));
+    // Overwrite/insert new saved entries
+    newSavedEntries.forEach(entry => {
+      updatedLocal = updatedLocal.filter(a => a.id !== entry.id);
+      updatedLocal.push(entry);
+    });
+
+    saveLocalItems(LOCAL_ACHIEVEMENTS_KEY, updatedLocal);
+    return updatedLocal;
+  },
+
   async deleteAchievement(achievementId: string): Promise<void> {
     try {
       await deleteDoc(doc(db, ACHIEVEMENTS_COL, achievementId));

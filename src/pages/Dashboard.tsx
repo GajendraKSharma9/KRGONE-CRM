@@ -115,10 +115,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ user }) => {
       setSyncMessage('');
       const result = await businessService.syncUnsyncedToFirestore(user.organizationId);
       if (result.syncedCount > 0) {
-        setSyncMessage(`Successfully saved ${result.syncedCount} record(s) to Cloud Firestore!`);
+        setSyncMessage(`Successfully saved ${result.syncedCount} record(s) to Cloud Database!`);
         setTimeout(() => setSyncMessage(''), 5000);
       } else {
-        setSyncMessage('All business records are now synced to Cloud Firestore.');
+        setSyncMessage('All business records are now synced to Cloud Database.');
         setTimeout(() => setSyncMessage(''), 3000);
       }
       await loadDashboardData();
@@ -243,19 +243,32 @@ export const Dashboard: React.FC<DashboardProps> = ({ user }) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
+    // Group activities by businessId for O(1) lookup speedup
+    const activitiesByBizId: Record<string, Activity[]> = {};
+    activities.forEach(a => {
+      if (a.businessId) {
+        if (!activitiesByBizId[a.businessId]) {
+          activitiesByBizId[a.businessId] = [];
+        }
+        activitiesByBizId[a.businessId].push(a);
+      }
+    });
+
     businesses.forEach(biz => {
       const status = (biz.status || 'NEW').toUpperCase();
       const isClosed = status === 'WON' || status === 'LOST';
+      const bizId = biz.id || '';
+      const bizActs = bizId ? (activitiesByBizId[bizId] || []) : [];
 
       // Health
-      const health = calculateLeadHealth(biz, activities);
+      const health = calculateLeadHealth(biz, bizActs);
       if (health === 'HEALTHY') healthyCount++;
       else if (health === 'NEEDS ATTENTION') attentionCount++;
       else if (health === 'AT RISK') riskCount++;
 
       if (!isClosed) {
         // Velocity
-        const vel = calculateLeadVelocity(biz, activities);
+        const vel = calculateLeadVelocity(biz, bizActs);
         if (vel.daysInCurrentStage > 15) {
           stagnantCount++;
         }
@@ -401,7 +414,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ user }) => {
   if (error) {
     return (
       <div className="bg-red-50 border border-red-200 rounded-xl p-6 text-red-700">
-        <h3 className="font-semibold text-lg mb-1">Firestore Connection Warning</h3>
+        <h3 className="font-semibold text-lg mb-1">Cloud Database Connection Warning</h3>
         <p className="text-sm">{error}</p>
       </div>
     );
@@ -462,7 +475,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ user }) => {
             onClick={handleSyncToCloud}
             disabled={syncing}
             className="inline-flex items-center space-x-1.5 px-3 py-2 bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-extrabold rounded-lg transition-colors shadow-sm cursor-pointer border border-amber-500 disabled:opacity-50"
-            title="Sync all records with Cloud Firestore database"
+            title="Sync all records with Cloud Database"
           >
             <CloudUpload className={`w-3.5 h-3.5 ${syncing ? 'animate-bounce' : ''}`} />
             <span>{syncing ? 'Syncing...' : unsyncedCount > 0 ? `Sync ${unsyncedCount}` : 'Cloud Sync'}</span>
@@ -493,7 +506,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ user }) => {
           <div>
             <div className="flex items-center space-x-2">
               <h4 className="text-xs font-bold text-amber-400 uppercase tracking-wider">
-                Cloud Firestore Database Status: Active
+                Cloud Database Status: Active
               </h4>
               <span className="px-2 py-0.2 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-full text-[10px] font-bold">
                 Online
@@ -502,7 +515,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ user }) => {
             <p className="text-[11px] text-slate-300 mt-0.5">
               {unsyncedCount > 0 
                 ? `⚠️ ${unsyncedCount} record(s) stored locally. Click Sync Now to upload.`
-                : `✓ ${totalBusinesses} business lead records actively synchronized with Firestore.`}
+                : `✓ ${totalBusinesses} business lead records actively synchronized with Cloud Database.`}
             </p>
           </div>
         </div>

@@ -18,7 +18,8 @@ import {
   Users,
   Sparkles,
   ChevronRight,
-  RefreshCw
+  RefreshCw,
+  Database
 } from 'lucide-react';
 import { UserProfile } from '../types';
 import { authService } from '../services/authService';
@@ -46,7 +47,10 @@ export const Layout: React.FC<LayoutProps> = ({ user, children }) => {
 
   const crmNavItems = [
     { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { path: '/businesses', label: 'Businesses', icon: Building2 },
+    { path: '/businesses', label: 'Sales Pipeline', icon: Building2 },
+    { path: '/contact-directory', label: 'Contact Directory', icon: Users },
+    { path: '/contact-directory?style=master', label: 'Lead Data Master', icon: Database },
+    { path: '/marketing-os', label: 'Marketing OS', icon: Sparkles },
     { path: '/activities', label: 'Activities', icon: ActivityIcon },
     { path: '/bulk-import', label: 'Bulk Import', icon: FileSpreadsheet },
     { path: '/settings', label: 'Settings', icon: SettingsIcon },
@@ -72,6 +76,9 @@ export const Layout: React.FC<LayoutProps> = ({ user, children }) => {
       if (location.pathname.includes('/settings')) return 'Performance Settings';
       return 'Sales Performance Dashboard';
     } else {
+      if (location.pathname === '/contact-directory' && location.search.includes('style=master')) {
+        return 'Lead Data Master';
+      }
       const item = crmNavItems.find(i => i.path === location.pathname);
       return item ? item.label : 'KRGONE Sales Navigator™';
     }
@@ -165,8 +172,14 @@ export const Layout: React.FC<LayoutProps> = ({ user, children }) => {
             </div>
             {activeNavItems.map((item) => {
               const Icon = item.icon;
-              const isActive = location.pathname === item.path || 
-                (item.path === '/sales-performance/dashboard' && location.pathname === '/sales-performance');
+              
+              // Custom active check to support query parameter-based items (e.g. Lead Data Master)
+              const itemPathBase = item.path.split('?')[0];
+              const itemPathQuery = item.path.split('?')[1] || '';
+              const isActive = itemPathQuery
+                ? (location.pathname === itemPathBase && location.search.includes(itemPathQuery))
+                : (location.pathname === itemPathBase && !location.search.includes('style=master')) ||
+                  (item.path === '/sales-performance/dashboard' && location.pathname === '/sales-performance');
               
               return (
                 <NavLink

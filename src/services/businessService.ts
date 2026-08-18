@@ -103,14 +103,26 @@ export const businessService = {
     if (localStore.length === 0) return 0;
 
     let firestoreIds = new Set<string>();
+    let queryFailed = false;
     try {
-      const snapshot = await getDocs(collection(db, COLLECTION_NAME));
+      const q = query(
+        collection(db, COLLECTION_NAME),
+        where('organizationId', '==', organizationId)
+      );
+      const snapshot = await getDocs(q);
       snapshot.forEach(docSnap => firestoreIds.add(docSnap.id));
-    } catch {
-      return localStore.length;
+    } catch (e) {
+      console.warn('Failed to query Firestore for unsynced count check:', e);
+      queryFailed = true;
     }
 
-    const unsynced = localStore.filter(b => !b.id || b.id.startsWith('biz_') || !firestoreIds.has(b.id));
+    const unsynced = localStore.filter(b => {
+      const isLocalOnlyId = !b.id || b.id.startsWith('biz_');
+      if (queryFailed) {
+        return isLocalOnlyId;
+      }
+      return isLocalOnlyId || !firestoreIds.has(b.id);
+    });
     return unsynced.length;
   },
 
@@ -118,15 +130,21 @@ export const businessService = {
   async syncUnsyncedToFirestore(organizationId: string): Promise<{ syncedCount: number; failedCount: number; totalCount: number }> {
     const localStore = getLocalStore();
     
-    // Step 1: Query Firestore to get existing document IDs & items
+    // Step 1: Query Firestore to get existing document IDs & items under the organization
     let firestoreIds = new Set<string>();
     let totalFirestore = 0;
+    let queryFailed = false;
     try {
-      const snapshot = await getDocs(collection(db, COLLECTION_NAME));
+      const q = query(
+        collection(db, COLLECTION_NAME),
+        where('organizationId', '==', organizationId)
+      );
+      const snapshot = await getDocs(q);
       totalFirestore = snapshot.size;
       snapshot.forEach(docSnap => firestoreIds.add(docSnap.id));
     } catch (e) {
-      console.warn('Failed to query Firestore for existing IDs:', e);
+      console.warn('Failed to query Firestore for existing IDs during sync:', e);
+      queryFailed = true;
     }
 
     if (localStore.length === 0) {
@@ -134,7 +152,16 @@ export const businessService = {
     }
 
     // Step 2: Filter local items that are NOT present in Firestore
-    const unsyncedLocals = localStore.filter(b => !b.id || b.id.startsWith('biz_') || !firestoreIds.has(b.id));
+    const unsyncedLocals = localStore.filter(b => {
+      // Ensure we only process records for the specified organization or unassigned
+      if (b.organizationId && b.organizationId !== organizationId) return false;
+      
+      const isLocalOnlyId = !b.id || b.id.startsWith('biz_');
+      if (queryFailed) {
+        return isLocalOnlyId;
+      }
+      return isLocalOnlyId || !firestoreIds.has(b.id);
+    });
 
     if (unsyncedLocals.length === 0) {
       return { syncedCount: 0, failedCount: 0, totalCount: totalFirestore || localStore.length };

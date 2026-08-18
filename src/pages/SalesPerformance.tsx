@@ -29,7 +29,9 @@ import {
   Globe,
   Box,
   Trophy,
-  Crown
+  Crown,
+  Grid3X3,
+  PlusCircle
 } from 'lucide-react';
 import { 
   ResponsiveContainer, 
@@ -106,6 +108,14 @@ export const SalesPerformance: React.FC<SalesPerformanceProps> = ({ user, tab = 
 
   // Targets Matrix Temporary State
   const [editedTargets, setEditedTargets] = useState<Record<string, number>>({});
+
+  // Achievement Matrix states
+  const [achMatrixMode, setAchMatrixMode] = useState<'matrix' | 'single'>('matrix'); // Default to bulk matrix spreadsheet entry for fast updates
+  const [achPeriodMonth, setAchPeriodMonth] = useState<string>(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  });
+  const [editedAchievements, setEditedAchievements] = useState<Record<string, number>>({});
 
   // Achievement log entry state
   const [logForm, setLogForm] = useState({
@@ -215,6 +225,25 @@ export const SalesPerformance: React.FC<SalesPerformanceProps> = ({ user, tab = 
     });
     setEditedTargets(initialMatrix);
   }, [targets, targetPeriod, teamMembers, kpis]);
+
+  // Sync edited achievements state whenever achievements list or selected month period changes
+  useEffect(() => {
+    const initialMatrix: Record<string, number> = {};
+    const salespeople = teamMembers.filter(m => m.role === 'Salesperson');
+    salespeople.forEach(sp => {
+      kpis.forEach(k => {
+        // Find and sum up achievements for this month
+        const matchingLogs = achievements.filter(a =>
+          a.salespersonUid === sp.uid &&
+          a.kpiId === k.id &&
+          (a.date || '').substring(0, 7) === achPeriodMonth
+        );
+        const totalValue = matchingLogs.reduce((acc, curr) => acc + (curr.value || 0), 0);
+        initialMatrix[`${sp.uid}::${k.id}`] = totalValue;
+      });
+    });
+    setEditedAchievements(initialMatrix);
+  }, [achievements, achPeriodMonth, teamMembers, kpis]);
 
   // Date Range calculation for proportional sub-monthly targets
   const periodDateRanges = useMemo(() => {
@@ -622,6 +651,68 @@ export const SalesPerformance: React.FC<SalesPerformanceProps> = ({ user, tab = 
       setErrorMsg(err.message || 'Failed to save targets matrix.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Save achievements matrix spreadsheet cell modifications
+  const handleSaveMatrixAchievements = async () => {
+    try {
+      setSaving(true);
+      setErrorMsg('');
+      const listToSave: { salespersonUid: string; salespersonName: string; kpiId: string; kpiName: string; value: number }[] = [];
+
+      for (const cellKey of Object.keys(editedAchievements)) {
+        const [salespersonUid, kpiId] = cellKey.split('::');
+        const sp = teamMembers.find(m => m.uid === salespersonUid);
+        const kpi = kpis.find(k => k.id === kpiId);
+        if (!sp || !kpi) continue;
+
+        const val = editedAchievements[cellKey] || 0;
+        listToSave.push({
+          salespersonUid,
+          salespersonName: sp.name || sp.email,
+          kpiId,
+          kpiName: kpi.name,
+          value: val
+        });
+      }
+
+      const updatedList = await performanceService.saveBulkAchievements(user.organizationId, achPeriodMonth, listToSave);
+      setAchievements(updatedList);
+
+      setSuccessMsg(`All Sales Achievements for Month ${achPeriodMonth} saved successfully!`);
+      setTimeout(() => setSuccessMsg(''), 4000);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to save achievements matrix.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Export Achievements Matrix helper
+  const handleExportAchievements = () => {
+    try {
+      const activeKpis = kpis.filter(k => k.active);
+      const activeSalespeople = teamMembers.filter(m => m.role === 'Salesperson');
+      
+      const rows = activeSalespeople.map(sp => {
+        const rowData: Record<string, any> = { 'Salesperson': sp.name || sp.email };
+        activeKpis.forEach(k => {
+          const val = editedAchievements[`${sp.uid}::${k.id}`] || 0;
+          rowData[`${k.name} Achievement`] = val;
+        });
+        return rowData;
+      });
+
+      const jsonStr = `data:text/json;charset=utf-8,${encodeURIComponent(JSON.stringify(rows, null, 2))}`;
+      const downloadAnchor = document.createElement('a');
+      downloadAnchor.setAttribute('href', jsonStr);
+      downloadAnchor.setAttribute('download', `KRGONE_Achievement_Matrix_${achPeriodMonth}.json`);
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+    } catch {
+      setErrorMsg('Failed to compile export document.');
     }
   };
 
@@ -2057,13 +2148,7 @@ export const SalesPerformance: React.FC<SalesPerformanceProps> = ({ user, tab = 
                       onChange={(e) => setTargetPeriod(e.target.value)}
                       className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold focus:outline-none focus:ring-1 focus:ring-indigo-500"
                     />
-                    <button
-                      onClick={handleExportTargets}
-                      className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-lg text-xs font-bold text-slate-700 transition-colors flex items-center space-x-1"
-                    >
-                      <FileDown className="w-3.5 h-3.5" />
-                      <span>Export</span>
-                    </button>
+
                   </div>
                 </div>
 
@@ -2141,217 +2226,359 @@ export const SalesPerformance: React.FC<SalesPerformanceProps> = ({ user, tab = 
               SUB-TAB: ACHIEVEMENT ENTRY
               ==================================================== */}
           {activeTab === 'achievement-entry' && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fade-in">
-              {/* Left Column: Log Form */}
-              <div className="lg:col-span-1 bg-white border border-slate-200 rounded-2xl p-5 shadow-3xs space-y-4">
-                <div>
+            <div className="space-y-6 animate-fade-in">
+              {/* Mode Selector Toggle Bar */}
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-4xs">
+                <div className="space-y-0.5">
                   <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider flex items-center">
                     <Award className="w-4 h-4 text-indigo-600 mr-1.5" />
-                    Manual Achievement Entry
+                    Manual Achievement & Actuals Entry
                   </h3>
-                  <p className="text-[10px] text-slate-400 font-bold uppercase mt-1">Log non-CRM override metric metrics directly into organization registers.</p>
+                  <p className="text-[10px] text-slate-400 font-bold uppercase">
+                    Log and update metric actual accomplishments directly in the organization register.
+                  </p>
                 </div>
 
-                <form onSubmit={handleLogAchievement} className="space-y-4 pt-1 border-t border-slate-100">
-                  <div>
-                    <label className="block text-[10px] font-black text-slate-400 uppercase mb-1">Salesperson Register</label>
-                    {user.role === 'Salesperson' ? (
-                      <div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-extrabold text-slate-800">
-                        {user.name || user.email}
-                      </div>
-                    ) : (
-                      <select
-                        required
-                        value={logForm.salespersonUid}
-                        onChange={(e) => setLogForm({ ...logForm, salespersonUid: e.target.value })}
-                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                      >
-                        <option value="">-- Select Salesperson --</option>
-                        {teamMembers.filter(m => m.role === 'Salesperson').map((sp) => (
-                          <option key={sp.uid} value={sp.uid}>{sp.name || sp.email}</option>
-                        ))}
-                      </select>
-                    )}
-                  </div>
-
-                  <div>
-                    <label className="block text-[10px] font-black text-slate-400 uppercase mb-1">KPI Objective Target</label>
-                    <select
-                      required
-                      value={logForm.kpiId}
-                      onChange={(e) => setLogForm({ ...logForm, kpiId: e.target.value })}
-                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                    >
-                      <option value="">-- Choose Objective KPI --</option>
-                      {kpis.filter(k => k.active).map((kpi) => (
-                        <option key={kpi.id} value={kpi.id}>{kpi.name} ({kpi.unit})</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[10px] font-black text-slate-400 uppercase mb-1">Completed Value</label>
-                      <input
-                        type="number"
-                        required
-                        min="0"
-                        placeholder="e.g. 50"
-                        value={logForm.value}
-                        onChange={(e) => setLogForm({ ...logForm, value: e.target.value === '' ? '' : Number(e.target.value) })}
-                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-black text-slate-400 uppercase mb-1">Completion Date</label>
-                      <input
-                        type="date"
-                        required
-                        value={logForm.date}
-                        onChange={(e) => setLogForm({ ...logForm, date: e.target.value })}
-                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Optional Advanced Expandable Segment */}
-                  <div className="border-t border-slate-100 pt-2">
-                    <button
-                      type="button"
-                      onClick={() => setShowAdvancedLog(!showAdvancedLog)}
-                      className="text-[10px] font-black text-indigo-600 uppercase tracking-wider flex items-center hover:text-indigo-800"
-                    >
-                      <span>{showAdvancedLog ? '✕ Hide' : '➕ Show'} Advanced Meta Fields</span>
-                    </button>
-
-                    {showAdvancedLog && (
-                      <div className="space-y-3 mt-3 animate-fade-in">
-                        <div>
-                          <label className="block text-[9px] font-black text-slate-400 uppercase mb-1">Customer / Client Name</label>
-                          <input
-                            type="text"
-                            placeholder="e.g. Acme Corp Inc."
-                            value={logForm.customerClient}
-                            onChange={(e) => setLogForm({ ...logForm, customerClient: e.target.value })}
-                            className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold focus:outline-none"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[9px] font-black text-slate-400 uppercase mb-1">Product / Contract Package</label>
-                          <input
-                            type="text"
-                            placeholder="e.g. Cloud Security Suite"
-                            value={logForm.product}
-                            onChange={(e) => setLogForm({ ...logForm, product: e.target.value })}
-                            className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold focus:outline-none"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[9px] font-black text-slate-400 uppercase mb-1">Supporting Reference Code</label>
-                          <input
-                            type="text"
-                            placeholder="e.g. CONT-2026-X9"
-                            value={logForm.supportingReference}
-                            onChange={(e) => setLogForm({ ...logForm, supportingReference: e.target.value })}
-                            className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold focus:outline-none"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[9px] font-black text-slate-400 uppercase mb-1">Log Description Notes</label>
-                          <textarea
-                            rows={2}
-                            placeholder="e.g. Project onboarding finalized with CEO signature."
-                            value={logForm.notes}
-                            onChange={(e) => setLogForm({ ...logForm, notes: e.target.value })}
-                            className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold focus:outline-none resize-none"
-                          />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
+                <div className="flex items-center space-x-2 bg-white p-1 rounded-xl border border-slate-200">
                   <button
-                    type="submit"
-                    disabled={saving}
-                    className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-md flex items-center justify-center space-x-1.5"
+                    onClick={() => setAchMatrixMode('matrix')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all flex items-center space-x-1.5 ${
+                      achMatrixMode === 'matrix'
+                        ? 'bg-indigo-600 text-white shadow-xs'
+                        : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'
+                    }`}
                   >
-                    <Save className="w-4 h-4" />
-                    <span>{saving ? 'Logging Entries...' : 'Submit Achievement Entry'}</span>
+                    <Grid3X3 className="w-3.5 h-3.5" />
+                    <span>Spreadsheet Matrix</span>
                   </button>
-                </form>
+                  <button
+                    onClick={() => setAchMatrixMode('single')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all flex items-center space-x-1.5 ${
+                      achMatrixMode === 'single'
+                        ? 'bg-indigo-600 text-white shadow-xs'
+                        : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'
+                    }`}
+                  >
+                    <PlusCircle className="w-3.5 h-3.5" />
+                    <span>Single Log Form</span>
+                  </button>
+                </div>
               </div>
 
-              {/* Right Column: Recent Achievements List */}
-              <div className="lg:col-span-2 bg-white border border-slate-200 rounded-2xl p-5 shadow-3xs space-y-4">
-                <div>
-                  <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider flex items-center">
-                    <Clock className="w-4 h-4 text-indigo-600 mr-1.5" />
-                    Recent Achievements Register Logs
-                  </h3>
-                  <p className="text-[10px] text-slate-400 font-bold uppercase mt-1">Scrollable chronology list of manually entered performance accomplishments.</p>
-                </div>
+              {achMatrixMode === 'matrix' ? (
+                /* Matrix spreadsheet-like view for Achievements */
+                <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-3xs space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+                    <div>
+                      <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider flex items-center">
+                        <Award className="w-4 h-4 text-indigo-600 mr-1.5" />
+                        Monthly Actuals Spreadsheet Matrix
+                      </h3>
+                      <p className="text-[10px] text-slate-400 font-bold uppercase mt-0.5">
+                        {user.role === 'Salesperson'
+                          ? 'Enter and submit your individual actual values for active KPI objectives.'
+                          : 'Enter and submit salesperson actual values for active KPI objectives in bulk.'}
+                      </p>
+                    </div>
 
-                <div className="overflow-x-auto border border-slate-150 rounded-xl max-h-[440px] overflow-y-auto">
-                  <table className="w-full text-left text-xs">
-                    <thead>
-                      <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-black uppercase text-[9px] tracking-wider sticky top-0">
-                        <th className="py-3 px-4">Salesperson</th>
-                        <th className="py-3 px-4">KPI Objective</th>
-                        <th className="py-3 px-4">Value</th>
-                        <th className="py-3 px-4">Date</th>
-                        <th className="py-3 px-4">Verification Metadata</th>
-                        <th className="py-3 px-4 text-center">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {achievements
-                        .filter(a => user.role === 'Salesperson' ? a.salespersonUid === user.uid : true)
-                        .sort((a, b) => b.date.localeCompare(a.date))
-                        .map(item => (
-                          <tr key={item.id} className="hover:bg-slate-50/50">
-                            <td className="py-3 px-4 font-black text-slate-900">{item.salespersonName}</td>
-                            <td className="py-3 px-4 font-bold text-slate-650">{item.kpiName}</td>
-                            <td className="py-3 px-4 font-extrabold text-indigo-600">{item.value}</td>
-                            <td className="py-3 px-4 font-bold text-slate-500">{item.date}</td>
-                            <td className="py-3 px-4 text-[10px] text-slate-400 space-y-0.5 max-w-[180px] truncate">
-                              {item.customerClient && (
-                                <span className="block truncate font-bold">🏢 Client: {item.customerClient}</span>
-                              )}
-                              {item.product && (
-                                <span className="block truncate font-bold">📦 Product: {item.product}</span>
-                              )}
-                              {item.supportingReference && (
-                                <span className="block truncate font-bold">📄 Ref: {item.supportingReference}</span>
-                              )}
-                              {item.notes && (
-                                <span className="block truncate italic">"{item.notes}"</span>
-                              )}
-                              {!item.customerClient && !item.product && !item.supportingReference && !item.notes && (
-                                <span className="text-slate-300 italic">No advanced metadata</span>
-                              )}
-                            </td>
-                            <td className="py-3 px-4 text-center">
-                              <button
-                                onClick={() => handleDeleteAchievement(item.id)}
-                                className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                                title="Retract achievement"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
+                    <div className="flex items-center space-x-2">
+                      <input
+                        type="month"
+                        value={achPeriodMonth}
+                        onChange={(e) => setAchPeriodMonth(e.target.value)}
+                        className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto border border-slate-150 rounded-xl">
+                    <table className="w-full text-left text-xs table-fixed min-w-[650px]">
+                      <thead>
+                        <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-black uppercase text-[9px] tracking-wider">
+                          <th className="py-3 px-4 w-[160px] border-r border-slate-200">Salesperson</th>
+                          {kpis.filter(k => k.active).map(kpi => (
+                            <th key={kpi.id} className="py-3 px-4 text-center border-r border-slate-200">
+                              <span className="block truncate">{kpi.name}</span>
+                              <span className="text-[8px] text-indigo-500 block">({kpi.unit})</span>
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {teamMembers
+                          .filter(m => m.role === 'Salesperson')
+                          .filter(sp => user.role === 'Salesperson' ? sp.uid === user.uid : true)
+                          .map(sp => (
+                            <tr key={sp.uid} className="hover:bg-slate-50/40">
+                              <td className="py-3 px-4 font-black text-slate-900 border-r border-slate-200 truncate">
+                                {sp.name || sp.email}
+                              </td>
+                              {kpis.filter(k => k.active).map(kpi => {
+                                const key = `${sp.uid}::${kpi.id}`;
+                                const val = editedAchievements[key] !== undefined ? editedAchievements[key] : '';
+                                return (
+                                  <td key={kpi.id} className="p-2 border-r border-slate-200">
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      className="w-full text-center px-2 py-1 border border-slate-200/70 rounded-lg text-xs font-bold bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                      placeholder="0"
+                                      value={val}
+                                      onChange={(e) => {
+                                        const rawVal = e.target.value;
+                                        setEditedAchievements(prev => ({
+                                          ...prev,
+                                          [key]: rawVal === '' ? 0 : Number(rawVal)
+                                        }));
+                                      }}
+                                    />
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        {teamMembers.filter(m => m.role === 'Salesperson').length === 0 && (
+                          <tr>
+                            <td colSpan={kpis.filter(k => k.active).length + 1} className="text-center py-8 text-slate-400 font-bold italic">
+                              No active Salespeople users registered in organization.
                             </td>
                           </tr>
-                        ))}
-                      {achievements.filter(a => user.role === 'Salesperson' ? a.salespersonUid === user.uid : true).length === 0 && (
-                        <tr>
-                          <td colSpan={6} className="text-center py-10 text-slate-400 font-bold italic">
-                            No manual accomplishments logged in database.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="flex items-center justify-between pt-4 border-t border-slate-100">
+                    <span className="text-[10px] font-black text-slate-400 uppercase">
+                      ⚠️ Saving will consolidate and override existing manual achievements for {achPeriodMonth}.
+                    </span>
+                    <button
+                      onClick={handleSaveMatrixAchievements}
+                      disabled={saving}
+                      className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-md flex items-center space-x-1.5"
+                    >
+                      <Save className="w-4 h-4" />
+                      <span>{saving ? 'Saving Accomplishments...' : 'Save All Matrix Achievements'}</span>
+                    </button>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                /* Original Single Item Log Form */
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  {/* Left Column: Log Form */}
+                  <div className="lg:col-span-1 bg-white border border-slate-200 rounded-2xl p-5 shadow-3xs space-y-4">
+                    <div>
+                      <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider flex items-center">
+                        <Award className="w-4 h-4 text-indigo-600 mr-1.5" />
+                        Log Single Achievement
+                      </h3>
+                      <p className="text-[10px] text-slate-400 font-bold uppercase mt-1">
+                        Log advanced manual entry logs with clients and notes.
+                      </p>
+                    </div>
+
+                    <form onSubmit={handleLogAchievement} className="space-y-4 pt-1 border-t border-slate-100">
+                      <div>
+                        <label className="block text-[10px] font-black text-slate-400 uppercase mb-1">Salesperson Register</label>
+                        {user.role === 'Salesperson' ? (
+                          <div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-extrabold text-slate-800">
+                            {user.name || user.email}
+                          </div>
+                        ) : (
+                          <select
+                            required
+                            value={logForm.salespersonUid}
+                            onChange={(e) => setLogForm({ ...logForm, salespersonUid: e.target.value })}
+                            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                          >
+                            <option value="">-- Select Salesperson --</option>
+                            {teamMembers.filter(m => m.role === 'Salesperson').map((sp) => (
+                              <option key={sp.uid} value={sp.uid}>{sp.name || sp.email}</option>
+                            ))}
+                          </select>
+                        )}
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] font-black text-slate-400 uppercase mb-1">KPI Objective Target</label>
+                        <select
+                          required
+                          value={logForm.kpiId}
+                          onChange={(e) => setLogForm({ ...logForm, kpiId: e.target.value })}
+                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        >
+                          <option value="">-- Choose Objective KPI --</option>
+                          {kpis.filter(k => k.active).map((kpi) => (
+                            <option key={kpi.id} value={kpi.id}>{kpi.name} ({kpi.unit})</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-[10px] font-black text-slate-400 uppercase mb-1">Completed Value</label>
+                          <input
+                            type="number"
+                            required
+                            min="0"
+                            placeholder="e.g. 50"
+                            value={logForm.value}
+                            onChange={(e) => setLogForm({ ...logForm, value: e.target.value === '' ? '' : Number(e.target.value) })}
+                            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-black text-slate-400 uppercase mb-1">Completion Date</label>
+                          <input
+                            type="date"
+                            required
+                            value={logForm.date}
+                            onChange={(e) => setLogForm({ ...logForm, date: e.target.value })}
+                            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Optional Advanced Expandable Segment */}
+                      <div className="border-t border-slate-100 pt-2">
+                        <button
+                          type="button"
+                          onClick={() => setShowAdvancedLog(!showAdvancedLog)}
+                          className="text-[10px] font-black text-indigo-600 uppercase tracking-wider flex items-center hover:text-indigo-800"
+                        >
+                          <span>{showAdvancedLog ? '✕ Hide' : '➕ Show'} Advanced Meta Fields</span>
+                        </button>
+
+                        {showAdvancedLog && (
+                          <div className="space-y-3 mt-3 animate-fade-in">
+                            <div>
+                              <label className="block text-[9px] font-black text-slate-400 uppercase mb-1">Customer / Client Name</label>
+                              <input
+                                type="text"
+                                placeholder="e.g. Acme Corp Inc."
+                                value={logForm.customerClient}
+                                onChange={(e) => setLogForm({ ...logForm, customerClient: e.target.value })}
+                                className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold focus:outline-none"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[9px] font-black text-slate-400 uppercase mb-1">Product / Contract Package</label>
+                              <input
+                                type="text"
+                                placeholder="e.g. Cloud Security Suite"
+                                value={logForm.product}
+                                onChange={(e) => setLogForm({ ...logForm, product: e.target.value })}
+                                className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold focus:outline-none"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[9px] font-black text-slate-400 uppercase mb-1">Supporting Reference Code</label>
+                              <input
+                                type="text"
+                                placeholder="e.g. CONT-2026-X9"
+                                value={logForm.supportingReference}
+                                onChange={(e) => setLogForm({ ...logForm, supportingReference: e.target.value })}
+                                className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold focus:outline-none"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[9px] font-black text-slate-400 uppercase mb-1">Log Description Notes</label>
+                              <textarea
+                                rows={2}
+                                placeholder="e.g. Project onboarding finalized with CEO signature."
+                                value={logForm.notes}
+                                onChange={(e) => setLogForm({ ...logForm, notes: e.target.value })}
+                                className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold focus:outline-none resize-none"
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={saving}
+                        className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-md flex items-center justify-center space-x-1.5"
+                      >
+                        <Save className="w-4 h-4" />
+                        <span>{saving ? 'Logging Entries...' : 'Submit Achievement Entry'}</span>
+                      </button>
+                    </form>
+                  </div>
+
+                  {/* Right Column: Recent Achievements List */}
+                  <div className="lg:col-span-2 bg-white border border-slate-200 rounded-2xl p-5 shadow-3xs space-y-4">
+                    <div>
+                      <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider flex items-center">
+                        <Clock className="w-4 h-4 text-indigo-600 mr-1.5" />
+                        Recent Achievements Register Logs
+                      </h3>
+                      <p className="text-[10px] text-slate-400 font-bold uppercase mt-1">Scrollable chronology list of manually entered performance accomplishments.</p>
+                    </div>
+
+                    <div className="overflow-x-auto border border-slate-150 rounded-xl max-h-[440px] overflow-y-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead>
+                          <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-black uppercase text-[9px] tracking-wider sticky top-0">
+                            <th className="py-3 px-4">Salesperson</th>
+                            <th className="py-3 px-4">KPI Objective</th>
+                            <th className="py-3 px-4">Value</th>
+                            <th className="py-3 px-4">Date</th>
+                            <th className="py-3 px-4">Verification Metadata</th>
+                            <th className="py-3 px-4 text-center">Action</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {achievements
+                            .filter(a => user.role === 'Salesperson' ? a.salespersonUid === user.uid : true)
+                            .sort((a, b) => b.date.localeCompare(a.date))
+                            .map(item => (
+                              <tr key={item.id} className="hover:bg-slate-50/50">
+                                <td className="py-3 px-4 font-black text-slate-900">{item.salespersonName}</td>
+                                <td className="py-3 px-4 font-bold text-slate-650">{item.kpiName}</td>
+                                <td className="py-3 px-4 font-extrabold text-indigo-600">{item.value}</td>
+                                <td className="py-3 px-4 font-bold text-slate-500">{item.date}</td>
+                                <td className="py-3 px-4 text-[10px] text-slate-400 space-y-0.5 max-w-[180px] truncate">
+                                  {item.customerClient && (
+                                    <span className="block truncate font-bold">🏢 Client: {item.customerClient}</span>
+                                  )}
+                                  {item.product && (
+                                    <span className="block truncate font-bold">📦 Product: {item.product}</span>
+                                  )}
+                                  {item.supportingReference && (
+                                    <span className="block truncate font-bold">📄 Ref: {item.supportingReference}</span>
+                                  )}
+                                  {item.notes && (
+                                    <span className="block truncate italic">"{item.notes}"</span>
+                                  )}
+                                  {!item.customerClient && !item.product && !item.supportingReference && !item.notes && (
+                                    <span className="text-slate-300 italic">No advanced metadata</span>
+                                  )}
+                                </td>
+                                <td className="py-3 px-4 text-center">
+                                  <button
+                                    onClick={() => handleDeleteAchievement(item.id)}
+                                    className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                                    title="Retract achievement"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          {achievements.filter(a => user.role === 'Salesperson' ? a.salespersonUid === user.uid : true).length === 0 && (
+                            <tr>
+                              <td colSpan={6} className="text-center py-10 text-slate-400 font-bold italic">
+                                No manual accomplishments logged in database.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

@@ -217,8 +217,19 @@ export function exportBusinessesToCSV(businesses: Business[], activities: Activi
     'Created Date'
   ];
 
+  const activitiesByBizId: Record<string, Activity[]> = {};
+  activities.forEach(a => {
+    if (a.businessId) {
+      if (!activitiesByBizId[a.businessId]) {
+        activitiesByBizId[a.businessId] = [];
+      }
+      activitiesByBizId[a.businessId].push(a);
+    }
+  });
+
   const rows = businesses.map(b => {
-    const health = calculateLeadHealth(b, activities);
+    const bizActs = b.id ? (activitiesByBizId[b.id] || []) : [];
+    const health = calculateLeadHealth(b, bizActs);
     const tagsStr = (b.tags || []).join('; ');
 
     return [

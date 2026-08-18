@@ -138,5 +138,58 @@ export interface TeamReview {
   updatedAt: string;
 }
 
+export interface MarketingChannel {
+  id?: string;
+  organizationId: string;
+  name: string;
+  category: string;
+  purpose: string;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MarketingSOP {
+  id?: string;
+  organizationId: string;
+  channelId: string;
+  activity: string;
+  frequency: string;
+  target: number;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MarketingActivity {
+  id?: string;
+  organizationId: string;
+  channelId: string;
+  sopId: string;
+  date: string; // YYYY-MM-DD
+  activity: string;
+  target: number;
+  actual: number;
+  result: string;
+  note: string;
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface MarketingInsight {
+  id?: string;
+  organizationId: string;
+  channelId: string;
+  period?: string;
+  decision: string;
+  reason: string;
+  createdBy: string;
+  createdAt: string;
+  date?: string;
+  targetDate?: string;
+  manager?: string;
+}
+
+
 
 

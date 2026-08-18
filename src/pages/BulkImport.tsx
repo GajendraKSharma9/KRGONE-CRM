@@ -486,7 +486,7 @@ export const BulkImport: React.FC<BulkImportProps> = ({ user }) => {
                 <span>Option 2: Smart Camera & PDF OCR</span>
               </div>
               <p className="text-xs text-slate-600">
-                Snap business cards, document photos, or upload PDF lead lists. Gemini AI automatically extracts contact details directly into Firestore records.
+                Snap business cards, document photos, or upload PDF lead lists. Gemini AI automatically extracts contact details directly into Cloud Database records.
               </p>
             </div>
 
@@ -635,7 +635,7 @@ export const BulkImport: React.FC<BulkImportProps> = ({ user }) => {
           <div className="flex items-center justify-between border-b border-slate-100 pb-4">
             <div>
               <h2 className="text-base font-bold text-slate-800">Import Analysis & Preview</h2>
-              <p className="text-xs text-slate-500">Review valid, duplicate, and invalid records before writing to Firestore.</p>
+              <p className="text-xs text-slate-500">Review valid, duplicate, and invalid records before writing to Cloud Database.</p>
             </div>
             <button
               onClick={() => setStep('mapping')}
@@ -836,7 +836,7 @@ export const BulkImport: React.FC<BulkImportProps> = ({ user }) => {
               </div>
               <h2 className="text-xl font-bold text-slate-900">Bulk Import Completed!</h2>
               <p className="text-xs text-slate-600">
-                Successfully imported <span className="font-bold text-emerald-600 text-sm">{finalResult.count}</span> valid business records directly to Firestore.
+                Successfully imported <span className="font-bold text-emerald-600 text-sm">{finalResult.count}</span> valid business records directly to Cloud Database.
               </p>
               <div className="pt-4 flex justify-center space-x-3">
                 <button

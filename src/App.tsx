@@ -11,6 +11,7 @@ import { Activities } from './pages/Activities';
 import { BulkImport } from './pages/BulkImport';
 import { Settings } from './pages/Settings';
 import { SalesPerformance } from './pages/SalesPerformance';
+import MarketingOS from './pages/MarketingOS';
 
 
 export default function App() {
@@ -65,6 +66,18 @@ export default function App() {
             <ProtectedRoute user={user} loading={loading}>
               <Layout user={user}>
                 <Businesses user={user!} />
+              </Layout>
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Protected Contact Directory */}
+        <Route
+          path="/contact-directory"
+          element={
+            <ProtectedRoute user={user} loading={loading}>
+              <Layout user={user}>
+                <Businesses user={user!} defaultView="list" />
               </Layout>
             </ProtectedRoute>
           }
@@ -173,6 +186,18 @@ export default function App() {
             <ProtectedRoute user={user} loading={loading}>
               <Layout user={user}>
                 <Settings user={user!} />
+              </Layout>
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Protected Marketing OS */}
+        <Route
+          path="/marketing-os"
+          element={
+            <ProtectedRoute user={user} loading={loading}>
+              <Layout user={user}>
+                <MarketingOS user={user!} />
               </Layout>
             </ProtectedRoute>
           }
