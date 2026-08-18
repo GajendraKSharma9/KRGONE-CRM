@@ -85,7 +85,14 @@ export const emailService = {
       })
     });
 
-    const data = await response.json();
+    let data: any;
+    const responseText = await response.text();
+    try {
+      data = JSON.parse(responseText);
+    } catch {
+      throw new Error(`Server returned non-JSON response (${response.status}): ${responseText.substring(0, 100)}`);
+    }
+
     if (!response.ok || !data.success) {
       throw new Error(data.error || 'Failed to authenticate with Hostinger SMTP.');
     }
@@ -115,7 +122,14 @@ export const emailService = {
       })
     });
 
-    const data = await response.json();
+    let data: any;
+    const responseText = await response.text();
+    try {
+      data = JSON.parse(responseText);
+    } catch {
+      throw new Error(`Server returned non-JSON response (${response.status}): ${responseText.substring(0, 100)}`);
+    }
+
     if (!response.ok || !data.success) {
       throw new Error(data.error || 'Failed to send email through Hostinger SMTP.');
     }
