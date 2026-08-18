@@ -1287,11 +1287,20 @@ export const Dashboard: React.FC<DashboardProps> = ({ user }) => {
                       <td className="py-3 px-3 text-right">
                         <div className="flex justify-end">
                           <CommunicationQuickActions
+                            business={biz}
+                            currentUser={user}
                             mobile={biz.mobile}
                             email={biz.email}
                             contactPerson={biz.contactPerson}
                             companyName={biz.companyName}
+                            leadStatus={biz.status}
                             onLogActivity={() => setSelectedBizForActivity(biz)}
+                            onBusinessUpdated={(bizId, updates) => {
+                              setBusinesses(prev => prev.map(b => b.id === bizId ? { ...b, ...updates } : b));
+                            }}
+                            onActivityLogged={(newAct) => {
+                              setActivities(prev => [newAct, ...prev]);
+                            }}
                             size="xs"
                           />
                         </div>

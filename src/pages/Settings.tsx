@@ -4,6 +4,7 @@ import { UserProfile, Organization } from '../types';
 import { authService } from '../services/authService';
 import { orgService } from '../services/orgService';
 import { Modal } from '../components/Modal';
+import { HostingerSmtpSettings } from '../components/HostingerSmtpSettings';
 
 interface SettingsProps {
   user: UserProfile;
@@ -250,6 +251,15 @@ export const Settings: React.FC<SettingsProps> = ({ user }) => {
           </div>
         </div>
       </div>
+
+      {/* KRGONE 1-CLICK HOSTINGER SMTP SETTINGS */}
+      <HostingerSmtpSettings
+        currentUser={user}
+        onSaved={() => {
+          setSuccessMsg('Hostinger Email configuration saved successfully!');
+          setTimeout(() => setSuccessMsg(''), 4000);
+        }}
+      />
 
       {/* TEAM MANAGEMENT SECTION */}
       <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs space-y-4">

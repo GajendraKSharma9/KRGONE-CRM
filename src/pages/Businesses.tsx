@@ -2010,11 +2010,20 @@ export const Businesses: React.FC<BusinessesProps> = ({ user, defaultView }) => 
                         </td>
                         <td className="px-5 py-3.5">
                           <CommunicationQuickActions
+                            business={biz}
+                            currentUser={user}
                             mobile={biz.mobile}
                             email={biz.email}
                             contactPerson={biz.contactPerson}
                             companyName={biz.companyName}
+                            leadStatus={biz.status}
                             onLogActivity={() => setActivityTargetBiz(biz)}
+                            onBusinessUpdated={(bizId, updates) => {
+                              setBusinesses(prev => prev.map(b => b.id === bizId ? { ...b, ...updates } : b));
+                            }}
+                            onActivityLogged={(newAct) => {
+                              setAllActivities(prev => [newAct, ...prev]);
+                            }}
                             size="sm"
                           />
                         </td>
@@ -2587,11 +2596,22 @@ export const Businesses: React.FC<BusinessesProps> = ({ user, defaultView }) => 
               <div className="flex items-center justify-between pb-2 border-b border-slate-200">
                 <span className="font-bold text-slate-800 text-sm">{selectedBusiness.companyName}</span>
                 <CommunicationQuickActions
+                  business={selectedBusiness}
+                  currentUser={user}
                   mobile={selectedBusiness.mobile}
                   email={selectedBusiness.email}
                   contactPerson={selectedBusiness.contactPerson}
                   companyName={selectedBusiness.companyName}
+                  leadStatus={selectedBusiness.status}
                   onLogActivity={() => setActivityTargetBiz(selectedBusiness)}
+                  onBusinessUpdated={(bizId, updates) => {
+                    setBusinesses(prev => prev.map(b => b.id === bizId ? { ...b, ...updates } : b));
+                    setSelectedBusiness(prev => prev ? { ...prev, ...updates } : null);
+                  }}
+                  onActivityLogged={(newAct) => {
+                    setAllActivities(prev => [newAct, ...prev]);
+                    setRelatedActivities(prev => [newAct, ...prev]);
+                  }}
                   size="sm"
                 />
               </div>
