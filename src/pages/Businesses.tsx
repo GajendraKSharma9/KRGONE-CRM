@@ -35,6 +35,7 @@ import { Modal } from '../components/Modal';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { CommunicationQuickActions } from '../components/CommunicationQuickActions';
 import { QuickActivityModal } from '../components/QuickActivityModal';
+import { OmnichannelTouchBar, getLeadOutreachSummary } from '../components/OmnichannelTouchBar';
 import { Download, ShieldAlert, HeartPulse, Hash } from 'lucide-react';
 
 interface BusinessesProps {
@@ -125,6 +126,7 @@ export const Businesses: React.FC<BusinessesProps> = ({ user, defaultView }) => 
   const [assignedOnlyFilter, setAssignedOnlyFilter] = useState<boolean>(false);
   const [noFollowUpFilter, setNoFollowUpFilter] = useState<boolean>(false);
   const [upcomingFilter, setUpcomingFilter] = useState<boolean>(false);
+  const [channelFilter, setChannelFilter] = useState<'All' | 'Email' | 'WhatsApp' | 'Call' | 'MultiTouch' | 'Untouched'>('All');
   const [allActivities, setAllActivities] = useState<Activity[]>(() => {
     try {
       const raw = localStorage.getItem('krg_activities_store');
@@ -378,9 +380,68 @@ export const Businesses: React.FC<BusinessesProps> = ({ user, defaultView }) => 
     return map;
   }, [businesses, allActivities]);
 
+  // Pre-compute omnichannel touchpoints summary map
+  const leadOutreachMap = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof getLeadOutreachSummary>>();
+    businesses.forEach(b => {
+      if (b.id) {
+        map.set(b.id, getLeadOutreachSummary(b, allActivities));
+      }
+    });
+    return map;
+  }, [businesses, allActivities]);
+
+  // Pre-compute aggregate channel statistics for top filter pills
+  const channelMetrics = useMemo(() => {
+    let emailed = 0;
+    let whatsApped = 0;
+    let called = 0;
+    let multiTouch = 0;
+    let untouched = 0;
+
+    businesses.forEach(b => {
+      const summary = b.id ? leadOutreachMap.get(b.id) : getLeadOutreachSummary(b, allActivities);
+      if (summary) {
+        if (summary.emailSent) emailed++;
+        if (summary.waSent) whatsApped++;
+        if (summary.callLogged) called++;
+        if (summary.totalChannelsCount >= 2) multiTouch++;
+        if (summary.totalChannelsCount === 0) untouched++;
+      }
+    });
+
+    return {
+      emailed,
+      whatsApped,
+      called,
+      multiTouch,
+      untouched,
+      total: businesses.length
+    };
+  }, [businesses, leadOutreachMap, allActivities]);
+
   // Filtered Businesses
   const filteredBusinesses = useMemo(() => {
     return businesses.filter(b => {
+      // Channel Outreach Filter
+      let matchesChannel = true;
+      if (channelFilter !== 'All') {
+        const summary = b.id ? leadOutreachMap.get(b.id) : getLeadOutreachSummary(b, allActivities);
+        if (summary) {
+          if (channelFilter === 'Email') {
+            matchesChannel = summary.emailSent;
+          } else if (channelFilter === 'WhatsApp') {
+            matchesChannel = summary.waSent;
+          } else if (channelFilter === 'Call') {
+            matchesChannel = summary.callLogged;
+          } else if (channelFilter === 'MultiTouch') {
+            matchesChannel = summary.totalChannelsCount >= 2;
+          } else if (channelFilter === 'Untouched') {
+            matchesChannel = summary.totalChannelsCount === 0;
+          }
+        }
+      }
+
       // Search
       const query = searchQuery.toLowerCase().trim();
       const matchesSearch = !query || 
@@ -505,9 +566,9 @@ export const Businesses: React.FC<BusinessesProps> = ({ user, defaultView }) => 
         matchesUpcoming = !!(b.nextFollowUpDate && b.nextFollowUpDate > todayStr && b.status !== 'WON' && b.status !== 'Won' && b.status !== 'LOST' && b.status !== 'Lost');
       }
 
-      return matchesSearch && matchesStatus && matchesIndustry && matchesTemp && matchesTelecaller && matchesSalesperson && matchesHealth && matchesTag && matchesStuck && matchesStaleHot && matchesFollowUp && matchesPeriod && matchesAssignedOnly && matchesNoFollowUp && matchesUpcoming;
+      return matchesChannel && matchesSearch && matchesStatus && matchesIndustry && matchesTemp && matchesTelecaller && matchesSalesperson && matchesHealth && matchesTag && matchesStuck && matchesStaleHot && matchesFollowUp && matchesPeriod && matchesAssignedOnly && matchesNoFollowUp && matchesUpcoming;
     });
-  }, [businesses, searchQuery, statusFilter, industryFilter, temperatureFilter, telecallerFilter, salespersonFilter, leadHealthAndVelocityMap, tagFilter, stuckFilter, staleHotFilter, followUpFilter, periodFilter, assignedOnlyFilter, noFollowUpFilter, upcomingFilter, user]);
+  }, [businesses, searchQuery, statusFilter, industryFilter, temperatureFilter, telecallerFilter, salespersonFilter, leadHealthAndVelocityMap, leadOutreachMap, channelFilter, tagFilter, stuckFilter, staleHotFilter, followUpFilter, periodFilter, assignedOnlyFilter, noFollowUpFilter, upcomingFilter, user]);
 
   // Open Add Modal
   const handleOpenAdd = () => {
@@ -735,6 +796,7 @@ export const Businesses: React.FC<BusinessesProps> = ({ user, defaultView }) => 
 
   const handleResetFilters = () => {
     setSearchQuery('');
+    setChannelFilter('All');
     setTelecallerFilter('All');
     setSalespersonFilter('All');
     setTemperatureFilter('All');
@@ -1848,6 +1910,115 @@ export const Businesses: React.FC<BusinessesProps> = ({ user, defaultView }) => 
             </div>
           </div>
 
+          {/* Omnichannel Channel Outreach Quick Filter Bar */}
+          <div className="px-5 py-2.5 border-b border-slate-200/80 bg-slate-50/40 flex flex-wrap items-center justify-between gap-2.5">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 mr-1">
+                Outreach Filter:
+              </span>
+              
+              {/* All */}
+              <button
+                type="button"
+                onClick={() => setChannelFilter('All')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center space-x-1.5 cursor-pointer ${
+                  channelFilter === 'All'
+                    ? 'bg-slate-900 text-white shadow-xs'
+                    : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+                }`}
+              >
+                <span>All Contacts</span>
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${channelFilter === 'All' ? 'bg-slate-800 text-slate-200' : 'bg-slate-100 text-slate-600'}`}>
+                  {channelMetrics.total}
+                </span>
+              </button>
+
+              {/* Emailed */}
+              <button
+                type="button"
+                onClick={() => setChannelFilter('Email')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center space-x-1.5 cursor-pointer ${
+                  channelFilter === 'Email'
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'bg-white text-blue-700 border border-blue-200 hover:bg-blue-50'
+                }`}
+              >
+                <span>✉️ Emailed</span>
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${channelFilter === 'Email' ? 'bg-blue-700 text-white' : 'bg-blue-100 text-blue-700'}`}>
+                  {channelMetrics.emailed}
+                </span>
+              </button>
+
+              {/* WhatsApped */}
+              <button
+                type="button"
+                onClick={() => setChannelFilter('WhatsApp')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center space-x-1.5 cursor-pointer ${
+                  channelFilter === 'WhatsApp'
+                    ? 'bg-emerald-600 text-white shadow-xs'
+                    : 'bg-white text-emerald-700 border border-emerald-200 hover:bg-emerald-50'
+                }`}
+              >
+                <span>💬 WhatsApped</span>
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${channelFilter === 'WhatsApp' ? 'bg-emerald-700 text-white' : 'bg-emerald-100 text-emerald-700'}`}>
+                  {channelMetrics.whatsApped}
+                </span>
+              </button>
+
+              {/* Called */}
+              <button
+                type="button"
+                onClick={() => setChannelFilter('Call')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center space-x-1.5 cursor-pointer ${
+                  channelFilter === 'Call'
+                    ? 'bg-amber-600 text-white shadow-xs'
+                    : 'bg-white text-amber-800 border border-amber-200 hover:bg-amber-50'
+                }`}
+              >
+                <span>📞 Called</span>
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${channelFilter === 'Call' ? 'bg-amber-700 text-white' : 'bg-amber-100 text-amber-800'}`}>
+                  {channelMetrics.called}
+                </span>
+              </button>
+
+              {/* Multi-Touch */}
+              <button
+                type="button"
+                onClick={() => setChannelFilter('MultiTouch')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center space-x-1.5 cursor-pointer ${
+                  channelFilter === 'MultiTouch'
+                    ? 'bg-purple-600 text-white shadow-xs'
+                    : 'bg-white text-purple-700 border border-purple-200 hover:bg-purple-50'
+                }`}
+              >
+                <span>🔥 Multi-Touch (2+ Channels)</span>
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${channelFilter === 'MultiTouch' ? 'bg-purple-700 text-white' : 'bg-purple-100 text-purple-700'}`}>
+                  {channelMetrics.multiTouch}
+                </span>
+              </button>
+
+              {/* Untouched */}
+              <button
+                type="button"
+                onClick={() => setChannelFilter('Untouched')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center space-x-1.5 cursor-pointer ${
+                  channelFilter === 'Untouched'
+                    ? 'bg-slate-700 text-white shadow-xs'
+                    : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'
+                }`}
+              >
+                <span>⚪ Fresh / Untouched</span>
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${channelFilter === 'Untouched' ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600'}`}>
+                  {channelMetrics.untouched}
+                </span>
+              </button>
+            </div>
+
+            <div className="text-[11px] font-semibold text-slate-500">
+              Showing <strong className="text-slate-900">{filteredBusinesses.length}</strong> of {businesses.length}
+            </div>
+          </div>
+
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase tracking-wider">
@@ -1871,7 +2042,8 @@ export const Businesses: React.FC<BusinessesProps> = ({ user, defaultView }) => 
                     <th className="px-4 py-3.5">Contact Person</th>
                     <th className="px-4 py-3.5">Status & Temp</th>
                     <th className="px-4 py-3.5">Health & Age</th>
-                    <th className="px-4 py-3.5">Quick Actions</th>
+                    <th className="px-4 py-3.5">Outreach Channels (✉️ 💬 📞)</th>
+                    <th className="px-4 py-3.5">Quick Action</th>
                     <th className="px-4 py-3.5">Assigned To</th>
                     <th className="px-4 py-3.5">Next Follow-Up</th>
                     <th className="px-4 py-3.5 text-right">Actions</th>
@@ -1896,6 +2068,7 @@ export const Businesses: React.FC<BusinessesProps> = ({ user, defaultView }) => 
                     <th className="px-4 py-3.5">Contact Person</th>
                     <th className="px-4 py-3.5">Mobile</th>
                     <th className="px-4 py-3.5">Email</th>
+                    <th className="px-4 py-3.5">Outreach Channels (✉️ 💬 📞)</th>
                     <th className="px-4 py-3.5">City</th>
                     <th className="px-4 py-3.5">Industry</th>
                     <th className="px-4 py-3.5 text-right">Actions</th>
@@ -2008,6 +2181,9 @@ export const Businesses: React.FC<BusinessesProps> = ({ user, defaultView }) => 
                             );
                           })()}
                         </td>
+                        <td className="px-5 py-3.5 min-w-[200px]">
+                          <OmnichannelTouchBar business={biz} activities={allActivities} />
+                        </td>
                         <td className="px-5 py-3.5">
                           <CommunicationQuickActions
                             business={biz}
@@ -2092,6 +2268,9 @@ export const Businesses: React.FC<BusinessesProps> = ({ user, defaultView }) => 
                           ) : (
                             <span className="text-slate-400 italic font-normal">-</span>
                           )}
+                        </td>
+                        <td className="px-4 py-3.5 min-w-[200px]">
+                          <OmnichannelTouchBar business={biz} activities={allActivities} />
                         </td>
                         <td className="px-4 py-3.5 text-slate-800 text-xs">
                           {biz.city || <span className="text-slate-400 italic font-normal">-</span>}

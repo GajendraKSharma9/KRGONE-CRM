@@ -44,6 +44,12 @@ export interface Business {
   leadHealth?: 'HEALTHY' | 'NEEDS ATTENTION' | 'AT RISK';
   dealValue?: number;
   expectedClosureDate?: string;
+  contactChannels?: ('Email' | 'WhatsApp' | 'Call' | 'Meeting')[];
+  lastContactMode?: 'Email' | 'WhatsApp' | 'Call' | 'Meeting';
+  lastContactedAt?: string;
+  emailSentCount?: number;
+  whatsappSentCount?: number;
+  callLoggedCount?: number;
   createdAt: string;
   updatedAt: string;
 }

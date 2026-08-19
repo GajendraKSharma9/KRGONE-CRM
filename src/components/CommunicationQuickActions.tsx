@@ -329,12 +329,25 @@ export const CommunicationQuickActions: React.FC<CommunicationQuickActionsProps>
 
       onActivityLogged?.(newAct);
 
-      // 2. Update Business Status and Next Follow-up
+      // 2. Update Business Status, Omnichannel tracking, and Next Follow-up
       if (bizId) {
+        const existingChannels = business?.contactChannels || [];
+        const updatedChannels = Array.from(new Set([...existingChannels, params.channel]));
+        const nowIso = new Date().toISOString();
+
         const updates: Partial<Business> = {
           nextFollowUpDate: followUpDate,
           nextAction: params.nextActionTitle,
+          contactChannels: updatedChannels,
+          lastContactMode: params.channel,
+          lastContactedAt: nowIso
         };
+
+        if (params.channel === 'Email') {
+          updates.emailSentCount = (business?.emailSentCount || 0) + 1;
+        } else if (params.channel === 'WhatsApp') {
+          updates.whatsappSentCount = (business?.whatsappSentCount || 0) + 1;
+        }
 
         if (rawStatus === 'NEW' || rawStatus === 'NEW LEADS' || rawStatus === 'NEW_LEAD') {
           updates.status = 'CONTACTED';
