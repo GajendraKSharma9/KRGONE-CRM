@@ -20,40 +20,44 @@ export const WHATSAPP_TEMPLATES: Record<'cold' | 'followup', WhatsAppTemplateCon
     title: 'Cold Outreach (First Message)',
     badge: 'COLD LEAD',
     description: 'Initial introduction and value proposition for new prospective businesses.',
-    template: `Hi {ContactName} Ji, Gajendra here from KRGONE.
+    template: `Hi *{ContactName}* Ji, Gajendra here from *KRGONE*.
 
-I came across {CompanyName} and wanted to connect with you. We help businesses improve growth, sales, processes and technology through:
+Have you noticed that *{CompanyName}* may be losing growth opportunities without you realizing it?
 
-• Business Consulting & Growth
-• Digital Technology
-• Software & CRM Solutions
-• AI & Automation
+The hidden gaps could be in *sales follow-ups, customer retention, daily business processes, team performance, or CRM & automation*.
 
-You can learn more about KRGONE here:
-🌐 www.krgone.com
+That's why we created a *FREE Business Growth Assessment* for business leaders like you.
 
-I wanted to understand if there is any area of your business you are currently looking to improve or grow.
+In just 5–7 minutes, get:
+➤ *Business Growth Score*
+➤ *Personalized 17-page PDF Report*
+➤ *Key strengths & improvement areas*
 
-Would be happy to connect.`
+★ *100% FREE*
+➤ https://www.krgone.com/business-growth-assessment
+
+_Before deciding what your business needs next, first find out where it actually stands._`
   },
   followup: {
     id: 'followup',
     title: 'Follow-up Message',
     badge: 'FOLLOW UP',
     description: 'Nurture and re-engage previously contacted leads or scheduled follow-ups.',
-    template: `Hi {ContactName} Ji, just following up on my earlier message regarding {CompanyName}.
+    template: `Hi *{ContactName}* Ji, just following up on my earlier message.
 
-At KRGONE, we help businesses with:
+Have you had a chance to check the *FREE Business Growth Assessment* for *{CompanyName}*?
 
-• Business Consulting & Growth
-• Digital Technology
-• Software & CRM Solutions
-• AI & Automation
+It takes just 5–7 minutes and gives you:
+➤ *Business Growth Score*
+➤ *Personalized 17-page Report*
+➤ *Key strengths & improvement areas*
 
-You can learn more about us here:
-🌐 www.krgone.com
+★ *Completely FREE*
+➤ https://www.krgone.com/business-growth-assessment
 
-If there is any area you are currently looking to improve, automate or grow, I would be happy to connect and understand your requirement.`
+_It’s a simple way to identify where your business stands today—and where growth may be getting blocked._
+
+Would you like to take the assessment?`
   }
 };
 
@@ -175,8 +179,10 @@ export function buildWhatsAppMessage(
   const company = cleanCompanyName(companyName);
 
   return templateConfig.template
-    .replace(/{ContactName}/g, name)
-    .replace(/{CompanyName}/g, company);
+    .replace(/{ContactName}/gi, name)
+    .replace(/\[\s*\*?\s*Contact\s*Name\s*\*?\s*\]/gi, name)
+    .replace(/{CompanyName}/gi, company)
+    .replace(/\[\s*\*?\s*Company\s*Name\s*\*?\s*\]/gi, company);
 }
 
 /**
