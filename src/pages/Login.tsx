@@ -59,9 +59,9 @@ export const Login: React.FC = () => {
           <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-blue-600 text-white mb-4 shadow-lg shadow-blue-500/20">
             <Compass className="w-7 h-7" />
           </div>
-          <h1 className="text-2xl font-bold text-white tracking-tight">KRGONE</h1>
-          <p className="text-sm font-medium text-blue-400 mt-1">Sales Navigator™</p>
-          <p className="text-xs text-slate-400 mt-2">Enterprise-ready CRM for businesses</p>
+          <h1 className="text-2xl font-bold text-white tracking-tight">KRG ONE PMS</h1>
+          <p className="text-xs font-bold text-blue-400 mt-1 uppercase tracking-wider">Your Intelligent Sales Assistant</p>
+          <p className="text-xs text-slate-400 mt-1.5">Sales Management System • Built for Business Founders & Sales Teams</p>
         </div>
 
         {/* Form Container */}
@@ -158,6 +158,13 @@ export const Login: React.FC = () => {
             </button>
           </form>
         </div>
+      </div>
+      
+      {/* Product Positioning Summary */}
+      <div className="mt-6 text-center text-slate-400 text-xs max-w-md mx-auto space-y-1.5 px-4">
+        <p className="text-[11px] text-slate-400 leading-relaxed">
+          Connecting <strong className="text-slate-300">Lead Management CRM</strong> & <strong className="text-slate-300">Sales Performance Management</strong> into one organized platform.
+        </p>
       </div>
     </div>
   );

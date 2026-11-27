@@ -111,7 +111,7 @@ export const HostingerSmtpSettings: React.FC<HostingerSmtpSettingsProps> = ({
 
     try {
       const testSubject = `Quick hello from Gajendra Sharma (KRGONE)`;
-      const testBody = `Dear Gajendra Ji,\n\nI am sending this quick message from the KRGONE Sales Navigator to verify that our direct Hostinger SMTP delivery lands straight in the Primary Inbox.\n\nOur direct 1-to-1 executive outreach format is active without any newsletter/promotional headers.\n\nRegards,\n${config.fromName}\nKRGONE\nTurning Knowledge into Business Growth\n📞 ${config.phone || '+91 7300300330'}\n🌐 www.krgone.com\n✉ ${config.fromEmail}`;
+      const testBody = `Dear Gajendra Ji,\n\nI am sending this quick message from KRG ONE PMS to verify that our direct Hostinger SMTP delivery lands straight in the Primary Inbox.\n\nOur direct 1-to-1 executive outreach format is active without any newsletter/promotional headers.\n\nRegards,\n${config.fromName}\nKRGONE\nTurning Knowledge into Business Growth\n📞 ${config.phone || '+91 7300300330'}\n🌐 www.krgone.com\n✉ ${config.fromEmail}`;
 
       await emailService.sendEmail({
         to: testEmailRecipient.trim(),

@@ -1,5 +1,5 @@
 /**
- * KRGONE Sales Navigator™ - Professional Email Template Engine
+ * KRG ONE PMS - Professional Email Template Engine
  * 
  * Configured with KRGONE Master Positioning:
  * 1. Cold / First Email: "Exploring Business Growth Opportunities for [Company Name]"

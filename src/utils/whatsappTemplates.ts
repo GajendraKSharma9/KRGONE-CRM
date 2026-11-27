@@ -1,5 +1,5 @@
 /**
- * KRGONE Sales Navigator™ - WhatsApp Message Template Engine
+ * KRG ONE PMS - WhatsApp Message Template Engine
  * 
  * Standard Templates:
  * 1. Cold First Message (for New Leads)

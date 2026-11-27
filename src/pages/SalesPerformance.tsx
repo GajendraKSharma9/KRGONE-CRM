@@ -1120,7 +1120,7 @@ export const SalesPerformance: React.FC<SalesPerformanceProps> = ({ user, tab = 
         </div>
         <h2 className="text-base font-black text-slate-900 uppercase tracking-wider">Access Restricted</h2>
         <p className="text-xs text-slate-500 leading-relaxed">
-          KRGONE Sales Performance™ is configured for active Salespeople, Managers, and Owners. If you believe this is an error, please contact your workspace administrator to modify your credentials.
+          KRG ONE PMS — Sales Performance Management is configured for active Salespeople, Managers, and Owners. If you believe this is an error, please contact your workspace administrator to modify your credentials.
         </p>
       </div>
     );
@@ -1577,41 +1577,41 @@ export const SalesPerformance: React.FC<SalesPerformanceProps> = ({ user, tab = 
                 return (
                   <div className="space-y-6 animate-fade-in">
                     {/* 1. TOP TEAM DASHBOARD HEADER */}
-                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-150 pb-5">
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-900 text-white rounded-2xl p-6 shadow-md border border-slate-800">
                       <div className="space-y-1">
                         <div className="flex items-center space-x-2.5">
-                          <h2 className="text-xl font-black text-slate-900 tracking-tight">KRGONE Sales Performance™</h2>
-                          <span className="inline-flex items-center px-2 py-0.5 bg-indigo-50 text-indigo-700 border border-indigo-150 text-[9px] font-black uppercase rounded-lg tracking-wider">
-                            OVERALL TEAM PERFORMANCE
+                          <h2 className="text-xl font-extrabold text-white tracking-tight">KRG ONE PMS</h2>
+                          <span className="inline-flex items-center px-2.5 py-0.5 bg-indigo-500/20 text-indigo-300 border border-indigo-400/30 text-[10px] font-bold uppercase rounded-full tracking-wider">
+                            Sales Performance Management
                           </span>
                         </div>
-                        <p className="text-xs text-slate-500 font-semibold">
-                          Overall Team Target & Performance Management
+                        <p className="text-xs text-slate-300 mt-1">
+                          <strong className="text-white">Your Intelligent Sales Assistant.</strong> Set sales targets, monitor team activities, review salesperson and manager-wise performance, and maintain clear visibility of sales progress.
                         </p>
                       </div>
 
                       {/* HEADER DROPDOWNS */}
                       <div className="flex flex-wrap items-center gap-3">
-                        <div className="flex items-center space-x-2 bg-white border border-slate-200 px-3 py-1.5 rounded-xl shadow-4xs">
+                        <div className="flex items-center space-x-2 bg-slate-800 border border-slate-700 px-3 py-1.5 rounded-xl shadow-xs">
                           <span className="text-[10px] font-black tracking-wider text-slate-400 uppercase">Month</span>
                           <input
                             type="month"
                             value={dashboardMonth}
                             onChange={(e) => setDashboardMonth(e.target.value)}
-                            className="bg-transparent border-none text-xs font-bold text-slate-700 focus:outline-none cursor-pointer"
+                            className="bg-transparent border-none text-xs font-bold text-white focus:outline-none cursor-pointer"
                           />
                         </div>
 
-                        <div className="flex items-center space-x-2 bg-white border border-slate-200 px-3 py-1.5 rounded-xl shadow-4xs">
+                        <div className="flex items-center space-x-2 bg-slate-800 border border-slate-700 px-3 py-1.5 rounded-xl shadow-xs">
                           <span className="text-[10px] font-black tracking-wider text-slate-400 uppercase">KPI Objective</span>
                           <select
                             value={dashboardKpiId}
                             onChange={(e) => setDashboardKpiId(e.target.value)}
-                            className="bg-transparent border-none text-xs font-bold text-slate-700 focus:outline-none cursor-pointer pr-4"
+                            className="bg-transparent border-none text-xs font-bold text-white focus:outline-none cursor-pointer pr-4"
                           >
-                            <option value="all">All KPIs</option>
+                            <option value="all" className="bg-slate-900 text-white">All KPIs</option>
                             {kpis.filter(k => k.active).map(kpi => (
-                              <option key={kpi.id} value={kpi.id}>{kpi.name}</option>
+                              <option key={kpi.id} value={kpi.id} className="bg-slate-900 text-white">{kpi.name}</option>
                             ))}
                           </select>
                         </div>

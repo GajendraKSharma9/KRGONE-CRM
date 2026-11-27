@@ -518,7 +518,7 @@ export const BulkImport: React.FC<BulkImportProps> = ({ user }) => {
           <div className="flex items-center justify-between border-b border-slate-100 pb-4">
             <div>
               <h2 className="text-base font-bold text-slate-800">Map Worksheet Columns</h2>
-              <p className="text-xs text-slate-500">Match the spreadsheet headers to KRGONE Sales Navigator™ business fields.</p>
+              <p className="text-xs text-slate-500">Match the spreadsheet headers to KRG ONE PMS business fields.</p>
             </div>
             {sheetNames.length > 1 && (
               <div className="flex items-center space-x-2">

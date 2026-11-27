@@ -1,5 +1,5 @@
 /**
- * KRGONE Sales Navigator™ - Email Dispatcher Service
+ * KRG ONE PMS - Email Dispatcher Service
  * Supports Hostinger SMTP, Alias Masking (gajendra.sharma@krgone.com via info@krgone.com),
  * and dynamic per-user credentials.
  */

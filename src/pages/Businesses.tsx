@@ -820,7 +820,7 @@ export const Businesses: React.FC<BusinessesProps> = ({ user, defaultView }) => 
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
           <h1 className="text-xl font-bold text-slate-900 tracking-tight">
-            {viewMode === 'list' ? 'Contact Directory' : 'KRGONE Sales Navigator™ — SALES PIPELINE'}
+            {viewMode === 'list' ? 'Contact Directory' : 'KRG ONE PMS — SALES PIPELINE'}
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
             {viewMode === 'list' 

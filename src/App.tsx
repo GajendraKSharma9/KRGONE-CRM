@@ -32,7 +32,7 @@ export default function App() {
       <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
         <div className="flex flex-col items-center space-y-3">
           <div className="w-8 h-8 border-3 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-          <p className="text-xs text-slate-400 font-medium tracking-wide">Initializing KRGONE Sales Navigator™...</p>
+          <p className="text-xs text-slate-400 font-medium tracking-wide">Initializing KRG ONE PMS...</p>
         </div>
       </div>
     );

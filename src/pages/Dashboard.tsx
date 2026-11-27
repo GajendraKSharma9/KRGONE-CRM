@@ -426,13 +426,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ user }) => {
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-slate-900 text-white rounded-2xl p-6 shadow-md border border-slate-800">
         <div>
           <div className="flex items-center space-x-2">
-            <h1 className="text-xl font-extrabold tracking-tight">KRGONE Sales Navigator™</h1>
+            <h1 className="text-xl font-extrabold tracking-tight">KRG ONE PMS</h1>
             <span className="px-2.5 py-0.5 text-[10px] font-bold bg-blue-500/20 text-blue-300 border border-blue-400/30 rounded-full">
-              CRM Workspace
+              Lead Management CRM
             </span>
           </div>
           <p className="text-xs text-slate-300 mt-1">
-            Welcome back, <strong className="text-white">{user.name}</strong>. Business → Lead → Activity → Follow-Up Pipeline.
+            <strong className="text-white">Your Intelligent Sales Assistant.</strong> Manage your leads, customer database, sales pipeline, lead allocation, follow-ups, and sales activities in one organized workspace.
           </p>
         </div>
 

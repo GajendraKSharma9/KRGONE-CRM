@@ -467,7 +467,7 @@ export default function MarketingOS({ user }: MarketingOSProps) {
         {
           name: "KRGONE Website",
           category: "Website",
-          purpose: "Visitor -> Action -> Enquiry -> Sales Navigator",
+          purpose: "Visitor -> Action -> Enquiry -> KRG ONE PMS",
           sops: [
             { activity: "Check website/forms/links", frequency: "Weekly", target: 1 },
             { activity: "Check enquiry submissions", frequency: "Daily", target: 1 },
@@ -479,7 +479,7 @@ export default function MarketingOS({ user }: MarketingOSProps) {
         {
           name: "Business Growth Assessment",
           category: "Website",
-          purpose: "Promotion -> Assessment -> Enquiry -> Qualification -> Sales Navigator",
+          purpose: "Promotion -> Assessment -> Enquiry -> Qualification -> KRG ONE PMS",
           sops: [
             { activity: "Promote assessment on Personal LinkedIn", frequency: "Weekly", target: 1 },
             { activity: "Promote from KRGONE Consulting Page", frequency: "Weekly", target: 1 },
